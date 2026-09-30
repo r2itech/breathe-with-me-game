@@ -89,41 +89,35 @@ npm run assets
 
 ## Deployment
 
-The game is deployed to Vercel from GitHub Actions (`.github/workflows/ci-cd.yml`).
+Vercel deploys the site straight from GitHub. GitHub Actions
+(`.github/workflows/ci.yml`) only runs the checks.
 
-**Branches**
-
-| Branch | Runs | Result |
+| Branch | GitHub Actions | Vercel |
 |---|---|---|
-| `master` | type-check, build, deploy | production deployment on the live domain |
-| `develop` | type-check, build, deploy | preview deployment on a generated URL |
-| pull request | type-check, build, deploy | preview deployment, posted as a comment on the PR |
+| `master` | type-check, build | production deployment |
+| `develop` | type-check, build | preview deployment |
+| pull request | type-check, build | preview deployment, linked on the PR |
 
-Every deploy is gated on `tsc --noEmit` and a clean `vite build`, so a broken build never reaches Vercel. Pull requests from forks run the checks but skip the deploy, because they have no access to the repository secrets.
+CI type-checks with `tsc --noEmit`. The Vercel build does not: `vercel.json`
+runs `build:web`, which skips TypeScript for a faster deploy. The two are
+worth keeping side by side.
 
 **One-time setup**
 
-1. Create the Vercel project once from your machine, so it is linked to this code:
+1. In the Vercel dashboard, **Add New → Project**, import this repository and
+   deploy. `vercel.json` already supplies the build command
+   (`npm run build:web`) and the output directory (`dist`), so the detected
+   defaults are correct as they stand.
+2. Under **Settings → Git**, check that the production branch is `master`.
+   Every other branch, and every pull request, then gets a preview deployment.
+3. Set `VITE_SITE_URL` in `.env.production` to the site's final URL, so the
+   sharing previews use absolute links, and update the "Play it in your
+   browser" link at the top of this file.
 
-   ```bash
-   npx vercel link
-   ```
-
-   This writes `.vercel/project.json`, which is git-ignored.
-
-2. Create an access token at [vercel.com/account/tokens](https://vercel.com/account/tokens).
-
-3. In GitHub, under **Settings → Secrets and variables → Actions**, add three repository secrets:
-
-   | Secret | Where to find it |
-   |---|---|
-   | `VERCEL_TOKEN` | the token from step 2 |
-   | `VERCEL_ORG_ID` | `orgId` in `.vercel/project.json` |
-   | `VERCEL_PROJECT_ID` | `projectId` in `.vercel/project.json` |
-
-4. In the Vercel project, set `VITE_SITE_URL` to the final site URL for the production environment (and to the preview URL pattern for previews). Update the same value in `.env.production` and the "Play it in your browser" link at the top of this file.
-
-5. Optional, but recommended: in the Vercel project's **Git** settings, disconnect the GitHub integration or turn off automatic deployments, so a commit is not deployed twice — once by Vercel and once by this workflow.
+Vercel deploys in parallel with CI rather than waiting for it, so protect
+`master` (**Settings → Branches** on GitHub) and require the
+**Type-check & build** check to pass before a merge. Without that, code that
+does not compile can still reach production.
 
 **Deploying by hand**
 
