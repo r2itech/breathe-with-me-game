@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+release/
+*.zip
+
+# Local env overrides (VITE_SITE_URL is public, so .env / .env.production are tracked)
+.env.local
+.env.*.local
+
+# Deployment
+.vercel
+
+# Logs & OS cruft
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/

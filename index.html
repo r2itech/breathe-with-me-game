@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <title>Breathe With Me — A small game for World Mental Health Day</title>
+    <meta name="description" content="A small, calm rhythm game about being there for someone. Breathe with people in a moment of panic and slowly help them calm down. Made for World Mental Health Day." />
+    <meta name="theme-color" content="#0a0c26" />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="favicon-32.png" type="image/png" sizes="32x32" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Breathe With Me" />
+    <meta property="og:description" content="A small game for World Mental Health Day. Breathe with someone in a moment of panic, and help them calm down." />
+    <meta property="og:url" content="%VITE_SITE_URL%/" />
+    <meta property="og:image" content="%VITE_SITE_URL%/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Breathe With Me" />
+    <meta name="twitter:description" content="A small game for World Mental Health Day." />
+    <meta name="twitter:image" content="%VITE_SITE_URL%/og-image.png" />
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #000;
+        overscroll-behavior: none;
+        touch-action: none;
+      }
+      body {
+        position: fixed;
+        inset: 0;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-touch-callout: none;
+        -webkit-tap-highlight-color: transparent;
+        cursor: default;
+      }
+      canvas { display: block; touch-action: none; }
+    </style>
+  </head>
+  <body>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
