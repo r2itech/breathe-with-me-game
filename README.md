@@ -6,11 +6,10 @@
 
 <p align="center"><em>A small game for World Mental Health Day</em></p>
 
-<p align="center"><strong><a href="https://TODO.vercel.app">Play it in your browser →</a></strong></p>
+<p align="center"><strong><a href="https://breathe-with-me-game.vercel.app">Play it in your browser →</a></strong></p>
 
 <p align="center">
   <img src="docs/screenshot.png" alt="Breathe With Me screenshot" width="720" />
-  <!-- TODO: add docs/screenshot.png -->
 </p>
 
 ## About
@@ -23,12 +22,12 @@ Released for World Mental Health Day, October 10, 2026.
 
 ## How to play
 
-| Input | Breathe in | Breathe out | Pause |
-|---|---|---|---|
-| Keyboard | Hold **Space** | Release | **Esc** |
-| Mouse | Hold the left button | Release | **Esc** or the pause button |
-| Touch | Hold anywhere on the screen | Lift your finger | The pause button, top right |
-| Gamepad | Hold **A** | Release | **Start** |
+| Input    | Breathe in                  | Breathe out      | Pause                       |
+| -------- | --------------------------- | ---------------- | --------------------------- |
+| Keyboard | Hold **Space**              | Release          | **Esc**                     |
+| Mouse    | Hold the left button        | Release          | **Esc** or the pause button |
+| Touch    | Hold anywhere on the screen | Lift your finger | The pause button, top right |
+| Gamepad  | Hold **A**                  | Release          | **Start**                   |
 
 Follow the glowing line at the bottom of the screen. Each person has up to three phases:
 
@@ -92,10 +91,10 @@ npm run assets
 Vercel deploys the site straight from GitHub. GitHub Actions
 (`.github/workflows/ci.yml`) only runs the checks.
 
-| Branch | GitHub Actions | Vercel |
-|---|---|---|
-| `master` | type-check, build | production deployment |
-| `develop` | type-check, build | preview deployment |
+| Branch       | GitHub Actions    | Vercel                               |
+| ------------ | ----------------- | ------------------------------------ |
+| `master`     | type-check, build | production deployment                |
+| `develop`    | type-check, build | preview deployment                   |
 | pull request | type-check, build | preview deployment, linked on the PR |
 
 CI type-checks with `tsc --noEmit`. The Vercel build does not: `vercel.json`
