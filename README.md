@@ -87,6 +87,51 @@ The icons, favicons, PWA icons and sharing image are generated from `assets/icon
 npm run assets
 ```
 
+## Deployment
+
+The game is deployed to Vercel from GitHub Actions (`.github/workflows/ci-cd.yml`).
+
+**Branches**
+
+| Branch | Runs | Result |
+|---|---|---|
+| `master` | type-check, build, deploy | production deployment on the live domain |
+| `develop` | type-check, build, deploy | preview deployment on a generated URL |
+| pull request | type-check, build, deploy | preview deployment, posted as a comment on the PR |
+
+Every deploy is gated on `tsc --noEmit` and a clean `vite build`, so a broken build never reaches Vercel. Pull requests from forks run the checks but skip the deploy, because they have no access to the repository secrets.
+
+**One-time setup**
+
+1. Create the Vercel project once from your machine, so it is linked to this code:
+
+   ```bash
+   npx vercel link
+   ```
+
+   This writes `.vercel/project.json`, which is git-ignored.
+
+2. Create an access token at [vercel.com/account/tokens](https://vercel.com/account/tokens).
+
+3. In GitHub, under **Settings → Secrets and variables → Actions**, add three repository secrets:
+
+   | Secret | Where to find it |
+   |---|---|
+   | `VERCEL_TOKEN` | the token from step 2 |
+   | `VERCEL_ORG_ID` | `orgId` in `.vercel/project.json` |
+   | `VERCEL_PROJECT_ID` | `projectId` in `.vercel/project.json` |
+
+4. In the Vercel project, set `VITE_SITE_URL` to the final site URL for the production environment (and to the preview URL pattern for previews). Update the same value in `.env.production` and the "Play it in your browser" link at the top of this file.
+
+5. Optional, but recommended: in the Vercel project's **Git** settings, disconnect the GitHub integration or turn off automatic deployments, so a commit is not deployed twice — once by Vercel and once by this workflow.
+
+**Deploying by hand**
+
+```bash
+npx vercel           # preview deployment
+npx vercel --prod    # production deployment
+```
+
 ## Project structure
 
 ```
