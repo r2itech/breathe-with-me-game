@@ -33,13 +33,22 @@ export class Input {
   private padHeld = false;
   private listeners = new Set<Listener>();
   private firstInput: (() => void)[] = [];
+  private gestures = new Set<() => void>();
   private padPrev: boolean[] = [];
   private stickDir = 0;
   private stickRepeat = 0;
 
   constructor(target: HTMLElement) {
+    // Unlocking audio has to happen on a real gesture, and it must not depend on
+    // the gesture reaching the canvas: the rotate prompt covers the whole screen
+    // on a phone held in portrait, which is where every phone starts. Listening
+    // on window in the capture phase sees the tap whatever it lands on, and
+    // touchend is here because iOS unlocks most reliably on it.
+    for (const type of ['pointerdown', 'touchend', 'keydown'] as const) {
+      window.addEventListener(type, () => this.fireGesture(), { capture: true, passive: true });
+    }
+
     window.addEventListener('keydown', (e) => {
-      this.fireFirstInput();
       if (e.code === 'Space') {
         e.preventDefault();
         if (!e.repeat) this.keyHeld = true;
@@ -55,7 +64,6 @@ export class Input {
     });
 
     target.addEventListener('pointerdown', (e) => {
-      this.fireFirstInput();
       if (e.pointerType === 'mouse') {
         if (e.button === 0) this.mouseHeld = true;
       } else {
@@ -102,6 +110,12 @@ export class Input {
     this.firstInput.push(fn);
   }
 
+  // fires on every gesture, not just the first: unlocking audio can fail
+  // silently on mobile and only the next tap gets to try again
+  onGesture(fn: () => void): void {
+    this.gestures.add(fn);
+  }
+
   update(dt: number): void {
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
     let pad: Gamepad | null = null;
@@ -121,7 +135,7 @@ export class Input {
 
     this.padHeld = !!pressed[PAD_A];
     if (pressed.some((p, i) => p && !this.padPrev[i])) {
-      this.fireFirstInput();
+      this.fireGesture();
       this.emit('any');
     }
     if (edge(PAD_A)) this.emit('confirm');
@@ -162,6 +176,11 @@ export class Input {
   private emit(action: Action): void {
     // copy so listeners can unsubscribe while handling
     for (const fn of [...this.listeners]) fn(action);
+  }
+
+  private fireGesture(): void {
+    this.fireFirstInput();
+    for (const fn of [...this.gestures]) fn();
   }
 
   private fireFirstInput(): void {

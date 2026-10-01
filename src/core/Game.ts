@@ -44,11 +44,10 @@ export class Game {
     this.app = app;
     this.input = new Input(app.canvas);
     this.audio = new AudioEngine(this.settings.data);
-    // audio context can only start from a real input event
-    this.input.onFirstInput(() => {
-      void this.audio.init();
-      this.maybeIOSHint();
-    });
+    // audio context can only start from a real input event, and on mobile the
+    // first try often isn't enough, so every gesture gets to have another go
+    this.input.onGesture(() => void this.audio.init());
+    this.input.onFirstInput(() => this.maybeIOSHint());
     this.settings.onChange((s) => this.audio.applySettings(s));
 
     const sceneLayer = new Container();
@@ -141,7 +140,9 @@ export class Game {
   }
 
   private maybeIOSHint(): void {
-    if (!isIOS) return;
+    // on Safari 16.4+ the playback audio session already beats the silent
+    // switch, so the hint would just be wrong
+    if (!isIOS || navigator.audioSession) return;
     try {
       if (localStorage.getItem(IOS_HINT_KEY)) return;
       localStorage.setItem(IOS_HINT_KEY, '1');

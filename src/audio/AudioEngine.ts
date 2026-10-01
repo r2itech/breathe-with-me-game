@@ -38,16 +38,41 @@ export class AudioEngine {
     this.settings = settings;
   }
 
-  // must run from inside a user gesture in browsers
+  private get running(): boolean {
+    return (Tone.getContext().rawContext as AudioContext).state === 'running';
+  }
+
+  // iOS mutes Web Audio with the ring/silent switch on unless the page asks for
+  // a playback session. Safari 16.4+ only, and harmless to miss elsewhere.
+  private claimPlaybackSession(): void {
+    try {
+      if (navigator.audioSession) navigator.audioSession.type = 'playback';
+    } catch {
+      // older Safari, the silent-switch hint covers it
+    }
+  }
+
+  // must run from inside a user gesture in browsers. mobile browsers can resolve
+  // resume() while leaving the context suspended, so this never latches on a
+  // failed attempt: every later gesture calls it again until audio really runs.
   async init(): Promise<void> {
-    if (this.ready || this.starting) return;
+    if (this.starting || (this.ready && this.running)) return;
     this.starting = true;
+    this.claimPlaybackSession();
     try {
       await Tone.start();
+      const raw = Tone.getContext().rawContext as AudioContext;
+      if (raw.state !== 'running') await raw.resume();
+      // if it's already ready the graph survived a suspend and only needed waking
+      if (this.running && !this.ready) this.build();
     } catch {
+      // the browser refused: ready stays false, so the next gesture tries again
+    } finally {
       this.starting = false;
-      return;
     }
+  }
+
+  private build(): void {
     Tone.getContext().lookAhead = 0.05;
 
     this.master = new Tone.Gain(1).toDestination();
@@ -235,9 +260,9 @@ export class AudioEngine {
   wake(): void {
     if (!this.ready) return;
     try {
-      void (Tone.getContext().rawContext as AudioContext).resume();
+      void (Tone.getContext().rawContext as AudioContext).resume().catch(() => {});
     } catch {
-      // browser will resume it on the next gesture
+      // mobile refuses this outside a gesture, so init() retries on the next tap
     }
   }
 
