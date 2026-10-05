@@ -47,10 +47,15 @@ export class AudioEngine {
   }
 
   // one line of ground truth for the "still no sound" reports: whatever is
-  // wrong, this says whether it's the context, our graph, or neither
+  // wrong, this says whether it's the context, the game's own volume, or
+  // neither — ctx=running alone doesn't rule out the mixer sitting at 0
   diagnostics(): string {
     const raw = Tone.getContext().rawContext as AudioContext;
-    return `ctx=${raw.state} sr=${raw.sampleRate} dest=${raw.destination.maxChannelCount} ready=${this.ready} session=${navigator.audioSession?.type ?? 'n/a'}`;
+    const gains = this.ready
+      ? ` gain=${this.master.gain.value.toFixed(2)}/${this.musicBus.gain.value.toFixed(2)}/${this.sfxBus.gain.value.toFixed(2)}`
+      : ' gain=n/a(not built)';
+    const vol = `vol=${this.settings.master}/${this.settings.music}/${this.settings.sfx}`;
+    return `ctx=${raw.state} sr=${raw.sampleRate} ready=${this.ready}${gains} ${vol} session=${navigator.audioSession?.type ?? 'n/a'}`;
   }
 
   // a raw oscillator straight to the context's destination, nothing from Tone's
