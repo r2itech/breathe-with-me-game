@@ -42,9 +42,13 @@ export class Input {
     // Unlocking audio has to happen on a real gesture, and it must not depend on
     // the gesture reaching the canvas: the rotate prompt covers the whole screen
     // on a phone held in portrait, which is where every phone starts. Listening
-    // on window in the capture phase sees the tap whatever it lands on, and
-    // touchend is here because iOS unlocks most reliably on it.
-    for (const type of ['pointerdown', 'touchend', 'keydown'] as const) {
+    // on window in the capture phase sees the tap whatever it lands on.
+    //
+    // Which event types actually count as "a gesture" for audio unlock is not
+    // the same across engines (iOS Safari wants touchend, Chromium's autoplay
+    // policy document lists its own set) and isn't worth trusting to one guess,
+    // so every event every mobile audio library uses for this is listened for.
+    for (const type of ['touchstart', 'touchend', 'pointerdown', 'mousedown', 'click', 'keydown'] as const) {
       window.addEventListener(type, () => this.fireGesture(), { capture: true, passive: true });
     }
 

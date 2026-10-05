@@ -7,6 +7,10 @@ import { mtof } from './instruments';
 
 type MenuKind = keyof typeof MENU_MUSIC;
 
+function timeout(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 interface SongRequest {
   music: MusicConfig;
   companions: InstrumentKind[];
@@ -38,7 +42,7 @@ export class AudioEngine {
     this.settings = settings;
   }
 
-  private get running(): boolean {
+  get running(): boolean {
     return (Tone.getContext().rawContext as AudioContext).state === 'running';
   }
 
@@ -55,21 +59,30 @@ export class AudioEngine {
   // must run from inside a user gesture in browsers. mobile browsers can resolve
   // resume() while leaving the context suspended, so this never latches on a
   // failed attempt: every later gesture calls it again until audio really runs.
+  //
+  // some mobile browsers also leave the resume() promise pending forever instead
+  // of rejecting it when a gesture doesn't qualify, rather than settling it either
+  // way, so this races it against a timeout — without that, `starting` would stay
+  // true forever and silently swallow every later retry too.
   async init(): Promise<void> {
     if (this.starting || (this.ready && this.running)) return;
     this.starting = true;
     this.claimPlaybackSession();
     try {
-      await Tone.start();
-      const raw = Tone.getContext().rawContext as AudioContext;
-      if (raw.state !== 'running') await raw.resume();
-      // if it's already ready the graph survived a suspend and only needed waking
-      if (this.running && !this.ready) this.build();
+      await Promise.race([this.unlock(), timeout(2500)]);
     } catch {
       // the browser refused: ready stays false, so the next gesture tries again
     } finally {
       this.starting = false;
     }
+  }
+
+  private async unlock(): Promise<void> {
+    await Tone.start();
+    const raw = Tone.getContext().rawContext as AudioContext;
+    if (raw.state !== 'running') await raw.resume();
+    // if it's already ready the graph survived a suspend and only needed waking
+    if (this.running && !this.ready) this.build();
   }
 
   private build(): void {

@@ -113,6 +113,7 @@ export const TEXT = {
   platform: {
     rotate: 'Rotate your device to landscape',
     silentSwitch: 'No sound? Check your silent switch.',
+    enableSound: '🔊 Tap for sound',
   },
   wave: {
     key: isTouch ? 'HOLD' : 'SPACE',

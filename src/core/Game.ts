@@ -3,7 +3,7 @@ import { AudioEngine } from '../audio/AudioEngine';
 import { PERF } from '../data/levels';
 import { TEXT } from '../data/text';
 import { Input } from './Input';
-import { RotatePrompt, showToast } from './overlays';
+import { RotatePrompt, showToast, SoundButton } from './overlays';
 import { canFullscreen, isElectron, isIOS, isPortrait, isTouch, safeAreaInsets } from './platform';
 import { SceneManager } from './SceneManager';
 import { Save } from './Save';
@@ -34,6 +34,9 @@ export class Game {
   private offX = 0;
   private offY = 0;
   private rotate: RotatePrompt | null = null;
+  private soundButton: SoundButton | null = null;
+  // seconds left before it shows, -1 once it's not needed anymore this session
+  private soundButtonTimer = -1;
   private fpsTime = 0;
   private fpsFrames = 0;
   private slowFor = 0;
@@ -47,7 +50,11 @@ export class Game {
     // audio context can only start from a real input event, and on mobile the
     // first try often isn't enough, so every gesture gets to have another go
     this.input.onGesture(() => void this.audio.init());
-    this.input.onFirstInput(() => this.maybeIOSHint());
+    this.input.onFirstInput(() => {
+      this.maybeIOSHint();
+      // give the automatic unlock a couple of seconds before offering the button
+      if (this.soundButton) this.soundButtonTimer = 1.2;
+    });
     this.settings.onChange((s) => this.audio.applySettings(s));
 
     const sceneLayer = new Container();
@@ -57,7 +64,16 @@ export class Game {
     this.app.stage.addChild(this.stage, this.bars);
     this.scenes = new SceneManager(sceneLayer, overlayLayer, fadeLayer);
 
-    if (isTouch) this.rotate = new RotatePrompt(TEXT.platform.rotate);
+    if (isTouch) {
+      this.rotate = new RotatePrompt(TEXT.platform.rotate);
+      // last-resort unlock: a tap on this real <button> is the one gesture every
+      // mobile engine accepts, for when the passive listeners in Input.ts don't
+      this.soundButton = new SoundButton(TEXT.platform.enableSound, () => {
+        this.soundButton!.visible = false;
+        this.soundButtonTimer = 1.5;
+        void this.audio.init();
+      });
+    }
     window.addEventListener('resize', () => this.layout());
     window.addEventListener('orientationchange', () => this.layout());
     document.addEventListener('fullscreenchange', () => {
@@ -86,6 +102,7 @@ export class Game {
       // clamp so it doesn't jump when the window loses focus
       const dt = Math.min(ticker.deltaMS / 1000, 0.1);
       this.trackFps(ticker.deltaMS / 1000);
+      this.updateSoundButton(dt);
       this.input.update(dt);
       this.scenes.update(dt);
       this.stage.position.set(this.offX + this.shakeX * this.scale, this.offY + this.shakeY * this.scale);
@@ -162,6 +179,23 @@ export class Game {
       this.app.ticker.start();
       this.audio.wake();
     }
+  }
+
+  // shows the explicit sound button once the passive unlock has had a couple
+  // of seconds to work and clearly hasn't; hides it again the moment audio
+  // is actually running, from the passive path or the button itself
+  private updateSoundButton(dt: number): void {
+    if (!this.soundButton) return;
+    if (this.audio.running) {
+      if (this.soundButtonTimer !== -1) {
+        this.soundButtonTimer = -1;
+        this.soundButton.visible = false;
+      }
+      return;
+    }
+    if (this.soundButtonTimer < 0) return;
+    this.soundButtonTimer -= dt;
+    if (this.soundButtonTimer <= 0) this.soundButton.visible = true;
   }
 
   private trackFps(dt: number): void {
