@@ -73,6 +73,23 @@ export class SoundButton {
   }
 }
 
+// temporary diagnostic readout for the mobile-silence investigation: small,
+// unobtrusive, screenshot-able. remove once the cause is confirmed fixed.
+let diagEl: HTMLDivElement | null = null;
+
+export function setDiag(text: string): void {
+  style();
+  if (!diagEl) {
+    diagEl = document.createElement('div');
+    diagEl.style.cssText =
+      'position:fixed;top:calc(6px + env(safe-area-inset-top));left:6px;z-index:23;' +
+      'background:rgba(0,0,0,.6);color:#9ef7c8;font:11px/1.5 monospace;padding:5px 8px;' +
+      'border-radius:6px;pointer-events:none;white-space:pre-line;max-width:80vw';
+    document.body.appendChild(diagEl);
+  }
+  diagEl.textContent = text;
+}
+
 export function showToast(text: string, seconds: number): void {
   style();
   const el = document.createElement('div');

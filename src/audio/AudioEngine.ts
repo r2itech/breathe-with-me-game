@@ -46,6 +46,33 @@ export class AudioEngine {
     return (Tone.getContext().rawContext as AudioContext).state === 'running';
   }
 
+  // one line of ground truth for the "still no sound" reports: whatever is
+  // wrong, this says whether it's the context, our graph, or neither
+  diagnostics(): string {
+    const raw = Tone.getContext().rawContext as AudioContext;
+    return `ctx=${raw.state} sr=${raw.sampleRate} dest=${raw.destination.maxChannelCount} ready=${this.ready} session=${navigator.audioSession?.type ?? 'n/a'}`;
+  }
+
+  // a raw oscillator straight to the context's destination, nothing from Tone's
+  // graph involved. if this is inaudible, the problem is the context or the
+  // device, not our code: Tone can't be reached before this is.
+  testBeep(): void {
+    try {
+      const ctx = Tone.getContext().rawContext as AudioContext;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.5, ctx.currentTime + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.5);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.55);
+    } catch {
+      // surfaced through diagnostics() instead of thrown
+    }
+  }
+
   // iOS mutes Web Audio with the ring/silent switch on unless the page asks for
   // a playback session. Safari 16.4+ only, and harmless to miss elsewhere.
   private claimPlaybackSession(): void {

@@ -3,7 +3,7 @@ import { AudioEngine } from '../audio/AudioEngine';
 import { PERF } from '../data/levels';
 import { TEXT } from '../data/text';
 import { Input } from './Input';
-import { RotatePrompt, showToast, SoundButton } from './overlays';
+import { RotatePrompt, setDiag, showToast, SoundButton } from './overlays';
 import { canFullscreen, isElectron, isIOS, isPortrait, isTouch, safeAreaInsets } from './platform';
 import { SceneManager } from './SceneManager';
 import { Save } from './Save';
@@ -37,6 +37,8 @@ export class Game {
   private soundButton: SoundButton | null = null;
   // seconds left before it shows, -1 once it's not needed anymore this session
   private soundButtonTimer = -1;
+  // temporary, for the mobile-silence investigation: remove once resolved
+  private diagTimer = 0;
   private fpsTime = 0;
   private fpsFrames = 0;
   private slowFor = 0;
@@ -71,6 +73,10 @@ export class Game {
       this.soundButton = new SoundButton(TEXT.platform.enableSound, () => {
         this.soundButton!.visible = false;
         this.soundButtonTimer = 1.5;
+        // a tap on a real button is the one gesture no engine disputes, so this
+        // also doubles as ground truth: if this beep is inaudible, nothing
+        // further up the Tone.js graph can be reached either
+        this.audio.testBeep();
         void this.audio.init();
       });
     }
@@ -103,6 +109,7 @@ export class Game {
       const dt = Math.min(ticker.deltaMS / 1000, 0.1);
       this.trackFps(ticker.deltaMS / 1000);
       this.updateSoundButton(dt);
+      this.updateDiag(dt);
       this.input.update(dt);
       this.scenes.update(dt);
       this.stage.position.set(this.offX + this.shakeX * this.scale, this.offY + this.shakeY * this.scale);
@@ -196,6 +203,17 @@ export class Game {
     if (this.soundButtonTimer < 0) return;
     this.soundButtonTimer -= dt;
     if (this.soundButtonTimer <= 0) this.soundButton.visible = true;
+  }
+
+  // temporary, for the mobile-silence investigation: a live, screenshot-able
+  // readout so a report back doesn't need the player to find devtools.
+  // remove this method and its call site once the cause is confirmed fixed.
+  private updateDiag(dt: number): void {
+    if (!isTouch) return;
+    this.diagTimer -= dt;
+    if (this.diagTimer > 0) return;
+    this.diagTimer = 0.5;
+    setDiag(this.audio.diagnostics());
   }
 
   private trackFps(dt: number): void {
