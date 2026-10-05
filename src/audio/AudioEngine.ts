@@ -21,6 +21,10 @@ interface SongRequest {
 export class AudioEngine {
   ready = false;
   private starting = false;
+  // last thing that went wrong building or unlocking, if anything did.
+  // nothing upstream of this surfaced it before, so a real failure here
+  // looked identical to "the browser just won't unlock"
+  private lastError = '';
   private master!: Tone.Gain;
   private musicBus!: Tone.Gain;
   private sfxBus!: Tone.Gain;
@@ -42,6 +46,13 @@ export class AudioEngine {
     this.settings = settings;
   }
 
+  // catches anything that doesn't go through init()'s own try/catch — Tone.Reverb
+  // generates its impulse response fire-and-forget internally, for one, so a
+  // failure there would otherwise never reach `lastError` at all
+  recordUnhandledError(reason: unknown): void {
+    this.lastError = `unhandled: ${reason instanceof Error ? reason.message : String(reason)}`;
+  }
+
   get running(): boolean {
     return (Tone.getContext().rawContext as AudioContext).state === 'running';
   }
@@ -55,7 +66,8 @@ export class AudioEngine {
       ? ` gain=${this.master.gain.value.toFixed(2)}/${this.musicBus.gain.value.toFixed(2)}/${this.sfxBus.gain.value.toFixed(2)}`
       : ' gain=n/a(not built)';
     const vol = `vol=${this.settings.master}/${this.settings.music}/${this.settings.sfx}`;
-    return `ctx=${raw.state} sr=${raw.sampleRate} ready=${this.ready}${gains} ${vol} session=${navigator.audioSession?.type ?? 'n/a'}`;
+    const err = this.lastError ? ` err=${this.lastError}` : '';
+    return `ctx=${raw.state} sr=${raw.sampleRate} ready=${this.ready}${gains} ${vol} session=${navigator.audioSession?.type ?? 'n/a'}${err}`;
   }
 
   // a raw oscillator straight to the context's destination, nothing from Tone's
@@ -102,8 +114,13 @@ export class AudioEngine {
     this.claimPlaybackSession();
     try {
       await Promise.race([this.unlock(), timeout(2500)]);
-    } catch {
-      // the browser refused: ready stays false, so the next gesture tries again
+      this.lastError = '';
+    } catch (err) {
+      // record it instead of swallowing it: a build() failure here used to
+      // look identical to "the browser just won't unlock", when it's really
+      // the context being perfectly fine and something in our own graph
+      // throwing partway through, leaving `ready` false for a different reason
+      this.lastError = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
     } finally {
       this.starting = false;
     }

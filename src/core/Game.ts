@@ -49,6 +49,11 @@ export class Game {
     this.app = app;
     this.input = new Input(app.canvas);
     this.audio = new AudioEngine(this.settings.data);
+    // temporary, for the mobile-silence investigation: Tone.Reverb generates
+    // its impulse response fire-and-forget, so a failure there (or anywhere
+    // else async) would otherwise never reach the diagnostic. remove once
+    // the cause is confirmed fixed.
+    window.addEventListener('unhandledrejection', (e) => this.audio.recordUnhandledError(e.reason));
     // audio context can only start from a real input event, and on mobile the
     // first try often isn't enough, so every gesture gets to have another go
     this.input.onGesture(() => void this.audio.init());
