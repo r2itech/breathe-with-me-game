@@ -8,13 +8,23 @@ import { MAX_VOICES, mtof } from './instruments';
 
 type MenuKind = keyof typeof MENU_MUSIC;
 
-function timeout(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
+// Tone makes a default context on import, swap it before anything builds on it.
+// iOS keeps Tone's own (wrapped) context, which is known to work there. Everywhere
+// else Tone gets a plain AudioContext, so unlocking talks to the real thing and
+// not to standardized-audio-context's view of it. No sampleRate, and no latency
+// hint on Android: older Android Chrome builds are picky about anything non-default.
+if (isIOS) {
+  Tone.setContext(new Tone.Context({ latencyHint: 'playback', lookAhead: 0.15 }), true);
+} else if (typeof AudioContext === 'function') {
+  Tone.setContext(new AudioContext(), true);
+  if (isTouch) Tone.getContext().lookAhead = 0.15;
 }
 
-// phones: trade latency for battery. Tone makes its default context on import,
-// so swap it (and close the old one) before anything builds on it
-if (isTouch) Tone.setContext(new Tone.Context({ latencyHint: 'playback', lookAhead: 0.15 }), true);
+// events that count as user activation for audio (touchstart/pointerdown don't on Android)
+const UNLOCK_EVENTS = ['pointerup', 'touchend', 'click', 'keydown'] as const;
+
+// still not running this long after a tap = keep listening, the next tap retries
+const UNLOCK_CHECK_MS = 500;
 
 // things that put the whole context to sleep
 type Hold = 'hidden' | 'muted' | 'paused';
@@ -56,7 +66,6 @@ interface SongRequest {
 
 export class AudioEngine {
   ready = false;
-  private starting = false;
   private master!: Tone.Gain;
   private musicBus!: Tone.Gain;
   private sfxBus!: Tone.Gain;
@@ -76,10 +85,17 @@ export class AudioEngine {
   private holds = new Set<Hold>();
   private pauseTimer = 0;
   private silentEl: HTMLAudioElement | null = null;
+  private listening = false;
+  private unlockAttempts = 0;
+  private lastError = '';
+  // fired whenever running/unlocked may have changed
+  onStateChange: (() => void) | null = null;
 
   constructor(settings: SettingsData) {
     this.settings = settings;
     this.hold('muted', AudioEngine.isMuted(settings));
+    Tone.getContext().on('statechange', () => this.checkState());
+    this.listen(true);
   }
 
   private static isMuted(s: SettingsData): boolean {
@@ -99,9 +115,72 @@ export class AudioEngine {
     return this.ready && (this.running || this.holds.size > 0);
   }
 
-  // iOS mutes Web Audio with the ring/silent switch on unless the page asks for
-  // a playback session. Safari 16.4+ has an API for it, older iOS needs a
-  // looping silent <audio> to move the page onto the media channel.
+  private listen(on: boolean): void {
+    if (on === this.listening) return;
+    this.listening = on;
+    for (const type of UNLOCK_EVENTS) {
+      if (on) window.addEventListener(type, this.unlockAudio, { capture: true });
+      else window.removeEventListener(type, this.unlockAudio, { capture: true });
+    }
+  }
+
+  // runs inside the gesture. resume() goes first and synchronously, before
+  // anything else gets a chance to use up the activation
+  private unlockAudio = (): void => {
+    // asleep on purpose (muted, paused): a tap shouldn't wake it
+    if (this.ready && this.holds.size) return;
+    this.unlockAttempts++;
+    const ctx = this.context;
+    try {
+      ctx.resume().then(
+        () => this.checkState(),
+        (err: unknown) => this.noteError(err),
+      );
+    } catch (err) {
+      this.noteError(err);
+    }
+    // classic unlock: one silent sample through the context, same gesture
+    try {
+      const src = ctx.createBufferSource();
+      src.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+      src.connect(ctx.destination);
+      src.start(0);
+    } catch (err) {
+      this.noteError(err);
+    }
+    if (isIOS) this.claimPlaybackSession();
+    window.setTimeout(() => this.checkState(), UNLOCK_CHECK_MS);
+  };
+
+  // tap-to-retry from the speaker icon
+  retryUnlock(): void {
+    this.unlockAudio();
+  }
+
+  private noteError(err: unknown): void {
+    this.lastError = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+  }
+
+  private checkState(): void {
+    if (this.running) {
+      if (!this.ready) {
+        try {
+          this.build();
+        } catch (err) {
+          this.noteError(err);
+        }
+      }
+      this.listen(false);
+    } else if (this.holds.size === 0 || !this.ready) {
+      // never unlocked, or the OS knocked it out (calls, other apps): next tap fixes it
+      this.listen(true);
+    }
+    this.onStateChange?.();
+  }
+
+  // iOS only. Web Audio is muted with the ring/silent switch on unless the page
+  // asks for a playback session: Safari 16.4+ has an API for it, older iOS needs
+  // a looping silent <audio> to move the page onto the media channel.
   private claimPlaybackSession(): void {
     try {
       if (navigator.audioSession) {
@@ -111,43 +190,27 @@ export class AudioEngine {
     } catch {
       // fall through to the <audio> trick
     }
-    if (!isIOS || this.silentEl) return;
-    const el = document.createElement('audio');
-    el.src = silentWavUrl();
-    el.loop = true;
-    el.setAttribute('playsinline', '');
-    el.setAttribute('x-webkit-airplay', 'deny');
-    this.silentEl = el;
-    void el.play().catch(() => {});
-  }
-
-  // must run from inside a user gesture. mobile browsers can resolve resume()
-  // while leaving the context suspended, so this keeps trying on later gestures
-  // until it really runs; after that it only wakes a context the OS knocked out
-  // (calls, Siri), never one we put to sleep on purpose. the context itself is
-  // never recreated.
-  async init(): Promise<void> {
-    if (this.starting) return;
-    if (this.ready) {
-      if (!this.running && this.holds.size === 0) this.wake();
-      return;
-    }
-    this.starting = true;
-    this.claimPlaybackSession();
+    if (this.silentEl) return;
     try {
-      // some mobile browsers leave resume() pending forever on a gesture they don't count
-      await Promise.race([this.unlock(), timeout(2500)]);
+      const el = document.createElement('audio');
+      el.src = silentWavUrl();
+      el.loop = true;
+      el.setAttribute('playsinline', '');
+      el.setAttribute('x-webkit-airplay', 'deny');
+      this.silentEl = el;
+      this.playSilent();
     } catch {
-      // next gesture tries again
-    } finally {
-      this.starting = false;
+      // no keep-alive, the hint toast covers it
     }
   }
 
-  private async unlock(): Promise<void> {
-    await Tone.start();
-    if (!this.running) await this.context.resume();
-    if (this.running && !this.ready) this.build();
+  private playSilent(): void {
+    try {
+      const p = this.silentEl?.play();
+      if (p) p.catch(() => {});
+    } catch {
+      // never let this get in the way of the unlock
+    }
   }
 
   private build(): void {
@@ -347,19 +410,21 @@ export class AudioEngine {
         ctx.clockSource = 'offline';
         void this.context.suspend().catch(() => {});
         this.silentEl?.pause();
+        this.listen(false);
       } else {
         ctx.clockSource = 'worker';
-        this.wake();
+        // may be refused outside a gesture, so the next tap gets to retry too
+        void this.context.resume().then(
+          () => this.checkState(),
+          () => {},
+        );
+        this.playSilent();
+        this.listen(true);
       }
     } catch {
       // closed or mid-transition, the next change sorts it out
     }
-  }
-
-  // mobile can refuse this outside a gesture, init() retries on the next tap
-  private wake(): void {
-    void this.context.resume().catch(() => {});
-    if (this.silentEl) void this.silentEl.play().catch(() => {});
+    this.onStateChange?.();
   }
 
   pause(): void {
@@ -385,9 +450,17 @@ export class AudioEngine {
   }
 
   // live numbers for the ?perf=1 overlay
-  stats(): { state: string; voices: number } {
+  stats(): { state: string; voices: number; sampleRate: number; baseLatency: number; attempts: number; error: string } {
+    const ctx = this.context;
     let voices = this.song?.voices ?? 0;
     if (this.ready) voices += this.blip.activeVoices;
-    return { state: this.context.state, voices };
+    return {
+      state: ctx.state,
+      voices,
+      sampleRate: ctx.sampleRate,
+      baseLatency: ctx.baseLatency ?? 0,
+      attempts: this.unlockAttempts,
+      error: this.lastError,
+    };
   }
 }

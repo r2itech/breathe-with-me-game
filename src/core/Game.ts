@@ -58,14 +58,12 @@ export class Game {
 
   private constructor(app: Application) {
     this.app = app;
-    this.input = new Input(app.canvas);
+    // audio first: its unlock listeners have to run before anything else
+    // (fullscreen) touches the same gesture
     this.audio = new AudioEngine(this.settings.data);
-    // audio context can only start from a real input event, and on mobile the
-    // first try often isn't enough, so every gesture gets to have another go
-    this.input.onGesture(() => {
-      this.idle = 0;
-      void this.audio.init().finally(() => this.syncSoundButton());
-    });
+    this.audio.onStateChange = () => this.syncSoundButton();
+    this.input = new Input(app.canvas);
+    this.input.onGesture(() => (this.idle = 0));
     this.input.onFirstInput(() => {
       this.maybeIOSHint();
       // give the automatic unlock a couple of seconds before offering the button
@@ -87,10 +85,7 @@ export class Game {
       this.rotate = new RotatePrompt(TEXT.platform.rotate);
       // last-resort unlock: a tap on this real <button> is the one gesture every
       // mobile engine accepts, for when the passive listeners in Input.ts don't
-      this.soundButton = new SoundButton(TEXT.platform.enableSound, () => {
-        this.soundButton!.visible = false;
-        void this.audio.init().finally(() => this.syncSoundButton());
-      });
+      this.soundButton = new SoundButton(TEXT.platform.enableSound, () => this.audio.retryUnlock());
     }
     window.addEventListener('resize', () => this.layout());
     window.addEventListener('orientationchange', () => this.layout());

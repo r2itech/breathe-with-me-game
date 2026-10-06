@@ -10,21 +10,19 @@ export const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.
 
 export const canFullscreen = isElectron || !!document.fullscreenEnabled;
 
-// fullscreen + landscape lock, only works from inside a user gesture and not at all on iPhone
+// fullscreen + landscape lock, only works from inside a user gesture and not at all on iPhone.
+// either one failing never stops the other from being tried
 export function enterMobileFullscreen(): void {
   if (isElectron || !isTouch) return;
+  let request: Promise<void> | null = null;
   try {
-    if (document.fullscreenEnabled && !document.fullscreenElement) {
-      void document.documentElement
-        .requestFullscreen()
-        .then(() => lockLandscape())
-        .catch(() => {});
-    } else {
-      lockLandscape();
-    }
+    if (document.fullscreenEnabled && !document.fullscreenElement) request = document.documentElement.requestFullscreen();
   } catch {
     // not supported, fine
   }
+  // Android only allows the lock once fullscreen, so wait for it either way
+  if (request) request.then(lockLandscape, lockLandscape);
+  else lockLandscape();
 }
 
 function lockLandscape(): void {

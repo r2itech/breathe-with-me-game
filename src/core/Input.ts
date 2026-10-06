@@ -46,8 +46,7 @@ export class Input {
     //
     // Only events that actually grant user activation: iOS Safari wants
     // touchend, Chromium pointerup/mousedown/keydown, click covers the rest.
-    // The audio engine guards itself, so after the first unlock these are a
-    // no-op unless the OS knocked the context out.
+    // Audio unlock has its own listeners in AudioEngine, registered first.
     for (const type of ['touchend', 'pointerup', 'mousedown', 'click', 'keydown'] as const) {
       window.addEventListener(type, () => this.fireGesture(), { capture: true, passive: true });
     }
@@ -116,8 +115,9 @@ export class Input {
 
   // fires on every gesture, not just the first: unlocking audio can fail
   // silently on mobile and only the next tap gets to try again
-  onGesture(fn: () => void): void {
+  onGesture(fn: () => void): () => void {
     this.gestures.add(fn);
+    return () => this.gestures.delete(fn);
   }
 
   update(dt: number): void {

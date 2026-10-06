@@ -39,6 +39,7 @@ export class TitleScene extends Scene {
   private t = 0;
   private cy = VIEW_H / 2 - 20;
   private off: (() => void) | null = null;
+  private offGesture: (() => void) | null = null;
   private paused = false;
   private triedFullscreen = false;
   private corner = new Container();
@@ -83,6 +84,14 @@ export class TitleScene extends Scene {
   enter(): void {
     this.game.audio.playMenuMusic('title');
     this.off = this.game.input.on((a) => this.onAction(a));
+    // phones: first real tap here goes fullscreen + landscape. on a real gesture
+    // (pointerup/touchend), not pointerdown, which Android doesn't count, and
+    // after the audio unlock has already had its go at the same tap
+    this.offGesture = this.game.input.onGesture(() => {
+      if (this.paused || this.triedFullscreen || !isTouch) return;
+      this.triedFullscreen = true;
+      enterMobileFullscreen();
+    });
   }
 
   get deep(): boolean {
@@ -95,6 +104,7 @@ export class TitleScene extends Scene {
 
   exit(): void {
     this.off?.();
+    this.offGesture?.();
     this.menu?.destroy();
     this.menu = null;
   }
@@ -122,11 +132,6 @@ export class TitleScene extends Scene {
 
   private onAction(a: Action): void {
     if (this.paused) return;
-    // phones: first touch here goes fullscreen + landscape (needs the gesture, so it can't happen at boot)
-    if (a === 'any' && isTouch && !this.triedFullscreen) {
-      this.triedFullscreen = true;
-      enterMobileFullscreen();
-    }
     // returning players can skip the breathing intro
     if (a === 'confirm' && !this.revealed && this.game.save.hasProgress) this.doReveal();
   }
