@@ -1,4 +1,6 @@
 import * as Tone from 'tone';
+import { AUDIO_AUTOMATION } from '../data/levels';
+import { push } from './automation';
 
 // filtered noise that swells with how fast the lung is moving
 export class BreathVoice {
@@ -10,6 +12,12 @@ export class BreathVoice {
   // the noise source only runs while there's breath to hear
   private on = false;
   private quiet = 0;
+  // params go out ~10x a second, speed is averaged over that window
+  private acc = 0;
+  private travel = 0;
+  private amp = 0;
+  private freq = 700;
+  private fading = false;
 
   constructor(out: Tone.ToneAudioNode, pan: number, private level: number) {
     this.noise = new Tone.Noise('pink');
@@ -21,40 +29,56 @@ export class BreathVoice {
 
   update(dt: number, lung: number, inhaling: boolean, mute = false): void {
     if (dt <= 0) return;
-    const speed = Math.abs(lung - this.lastLung) / dt;
+    const step = Math.abs(lung - this.lastLung);
     this.lastLung = lung;
-    const now = Tone.now();
+    this.travel += step;
+    this.acc += dt;
     // inhale is airier and brighter, exhale lower and softer
-    const amp = mute ? 0 : Math.min(1, speed * 1.4) * this.level * (inhaling ? 1 : 0.8);
-    if (amp > 0.002) {
+    const ampFor = (speed: number) => (mute ? 0 : Math.min(1, speed * 1.4) * this.level * (inhaling ? 1 : 0.8));
+    const moving = ampFor(step / dt) > 0.002;
+    if (moving) {
       this.quiet = 0;
+      this.fading = false;
       if (!this.on) {
-        this.noise.start();
+        // input sound: no lookahead delay
+        this.noise.start(Tone.immediate());
         this.on = true;
+        this.acc = AUDIO_AUTOMATION.interval;
       }
     } else if (this.on && (this.quiet += dt) > 0.5) {
       this.off();
       return;
     }
-    if (!this.on) return;
+    if (!this.on || this.acc < AUDIO_AUTOMATION.interval) return;
+    const amp = ampFor(this.travel / this.acc);
     const freq = inhaling ? 600 + 1300 * lung : 280 + 700 * lung;
-    this.gain.gain.setTargetAtTime(amp, now, 0.06);
-    this.filter.frequency.setTargetAtTime(freq, now, 0.08);
+    this.acc = 0;
+    this.travel = 0;
+    const now = Tone.immediate();
+    this.amp = push(this.gain.gain, amp, this.amp, AUDIO_AUTOMATION.gainStep, 0, now);
+    this.freq = push(this.filter.frequency, freq, this.freq, AUDIO_AUTOMATION.breathFreqStep, NaN, now);
   }
 
   // no dt = right now (pause), otherwise after a short fade
   silence(dt = 0): void {
     if (!this.on) return;
-    this.gain.gain.setTargetAtTime(0, Tone.now(), 0.05);
+    if (!this.fading) {
+      this.fading = true;
+      this.amp = push(this.gain.gain, 0, this.amp, AUDIO_AUTOMATION.gainStep, 0, Tone.immediate());
+    }
     this.quiet += dt;
     if (dt === 0 || this.quiet > 0.4) this.off();
   }
 
   private off(): void {
-    this.gain.gain.setTargetAtTime(0, Tone.now(), 0.03);
-    this.noise.stop('+0.2');
+    const now = Tone.immediate();
+    this.amp = push(this.gain.gain, 0, this.amp, AUDIO_AUTOMATION.gainStep, 0, now);
+    this.noise.stop(now + 0.2);
     this.on = false;
     this.quiet = 0;
+    this.fading = false;
+    this.acc = 0;
+    this.travel = 0;
   }
 
   dispose(): void {

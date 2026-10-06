@@ -1,7 +1,7 @@
 import * as Tone from 'tone';
 import { isIOS, isTouch } from '../core/platform';
 import type { SettingsData } from '../core/Settings';
-import { AUDIO, MENU_MUSIC, type InstrumentKind, type MusicConfig } from '../data/levels';
+import { AUDIO, AUDIO_AUTOMATION, MENU_MUSIC, type InstrumentKind, type MusicConfig } from '../data/levels';
 import { BreathVoice } from './BreathVoice';
 import { LevelSong, type LayerLevels } from './LevelSong';
 import { MAX_VOICES, mtof } from './instruments';
@@ -86,6 +86,7 @@ export class AudioEngine {
   private pauseTimer = 0;
   private silentEl: HTMLAudioElement | null = null;
   private listening = false;
+  private automationAcc = 0;
   private unlockAttempts = 0;
   private lastError = '';
   // fired whenever running/unlocked may have changed
@@ -336,6 +337,16 @@ export class AudioEngine {
     }
   }
 
+  // every frame from the game loop; the actual param pushes happen ~10x a second
+  update(dt: number): void {
+    if (!this.ready || this.holds.size) return;
+    this.automationAcc += dt;
+    if (this.automationAcc < AUDIO_AUTOMATION.interval) return;
+    this.song?.update(this.automationAcc);
+    this.automationAcc = 0;
+  }
+
+  // only records targets, safe to call every frame
   setSongState(period: number, layers: LayerLevels, calm: number): void {
     if (!this.song) return;
     this.song.setTempo(period);
@@ -404,14 +415,15 @@ export class AudioEngine {
     [76, 81, 88].forEach((m, i) => this.blip.triggerAttackRelease(mtof(m), 0.25, now + i * 0.09, 0.35));
   }
 
+  // input sounds go out right away, not through the lookahead
   uiMove(): void {
     if (!this.ready) return;
-    this.blip.triggerAttackRelease(mtof(88), 0.05, Tone.now() + 0.01, 0.25);
+    this.blip.triggerAttackRelease(mtof(88), 0.05, Tone.immediate(), 0.25);
   }
 
   uiSelect(): void {
     if (!this.ready) return;
-    const now = Tone.now() + 0.01;
+    const now = Tone.immediate();
     this.blip.triggerAttackRelease(mtof(81), 0.08, now, 0.3);
     this.blip.triggerAttackRelease(mtof(88), 0.12, now + 0.07, 0.3);
   }

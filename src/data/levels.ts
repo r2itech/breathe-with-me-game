@@ -274,13 +274,26 @@ export const AUDIO = {
   beatsPerBreath: 8,
   minBpm: 60,
   maxBpm: 240,
-  tempoRamp: 1.2,
   breathGain: 0.55,
   npcBreathGain: 0.35,
   npcPan: -0.35,
   heartMinInterval: 0.42,
   heartMaxInterval: 1.1,
   heartGain: 0.9,
+};
+
+// game-driven audio params (tempo, layer volumes, filters, breath) are pushed to
+// the audio thread at most this often, and only when the change is audible
+export const AUDIO_AUTOMATION = {
+  interval: 0.1,
+  bpmStep: 0.5,
+  gainStep: 0.02,
+  cutoffStep: 30,
+  breathFreqStep: 40,
+  // smoothing time constants (s), done in JS before pushing
+  tempoSmooth: 0.4,
+  cutoffSmooth: 0.5,
+  layerSmooth: { pad: 0.4, pulse: 0.4, melody: 0.5, extra: 0.6, companion: 0.8 },
 };
 
 export interface SpikeConfig {

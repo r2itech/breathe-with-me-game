@@ -1,5 +1,6 @@
 import * as Tone from 'tone';
-import { AUDIO, type InstrumentKind, type MusicConfig } from '../data/levels';
+import { AUDIO, AUDIO_AUTOMATION, type InstrumentKind, type MusicConfig } from '../data/levels';
+import { approach, push } from './automation';
 import { makeInstrument, makePad, mtof, type Instrument } from './instruments';
 
 export interface LayerLevels {
@@ -31,8 +32,18 @@ export class LevelSong {
   private disposables: { dispose(): void }[] = [];
   private bar = 0;
   private step = 0;
-  private lastBpm = 0;
-  private cutoff = 0;
+  // targets come in every frame, update() smooths them and pushes ~10x a second
+  private target: LayerLevels = { pad: 0, pulse: 0, melody: 0, extra: 0, companions: [] };
+  private shown = { pad: 0, pulse: 0, melody: 0, extra: 0 };
+  private pushed = { pad: 0, pulse: 0, melody: 0, extra: 0 };
+  private shownComp: number[] = [];
+  private pushedComp: number[] = [];
+  private targetBpm = 0;
+  private shownBpm = 0;
+  private pushedBpm = 0;
+  private targetCut = 0;
+  private shownCut = 0;
+  private pushedCut = 0;
   // layers that are off don't get notes at all, a muted synth still burns CPU
   private on = { pad: false, pulse: false, melody: false, extra: false };
   private companionOn: boolean[] = [];
@@ -49,7 +60,7 @@ export class LevelSong {
 
     this.pad = makePad(cfg.padCutoff[0]);
     this.pad.filter.connect(this.layers.pad);
-    this.cutoff = cfg.padCutoff[0];
+    this.targetCut = this.shownCut = this.pushedCut = cfg.padCutoff[0];
 
     this.lead = makeInstrument(cfg.signature);
     this.lead.output.connect(this.layers.melody);
@@ -83,6 +94,8 @@ export class LevelSong {
       inst.output.connect(g);
       this.companionGains.push(g);
       this.companionInst.push(inst);
+      this.shownComp.push(0);
+      this.pushedComp.push(0);
     }
 
     this.schedule();
@@ -91,7 +104,7 @@ export class LevelSong {
     tr.stop();
     tr.position = 0;
     tr.bpm.value = bpmFor(period);
-    this.lastBpm = tr.bpm.value;
+    this.targetBpm = this.shownBpm = this.pushedBpm = tr.bpm.value;
     tr.start('+0.05');
     this.out.gain.rampTo(1, 1.5);
   }
@@ -174,34 +187,43 @@ export class LevelSong {
     );
   }
 
+  // cheap, fine to call every frame: only records targets
   setTempo(period: number): void {
-    const bpm = bpmFor(period);
-    if (Math.abs(bpm - this.lastBpm) < 0.5) return;
-    this.lastBpm = bpm;
-    Tone.getTransport().bpm.rampTo(bpm, AUDIO.tempoRamp);
+    this.targetBpm = bpmFor(period);
   }
 
   setLayers(l: LayerLevels, calm: number): void {
-    const now = Tone.now();
     const mix = this.cfg.mix;
     const live = (v: number) => v > 0.01;
+    this.target = l;
     this.on.pad = live(l.pad * mix.pad);
     this.on.pulse = live(l.pulse * mix.pulse);
     this.on.melody = live(l.melody * mix.melody);
     this.on.extra = live(l.extra * mix.extra);
     this.companionOn = this.companionGains.map((_, i) => live((l.companions[i] ?? 0) * mix.companion));
-    this.layers.pad.gain.setTargetAtTime(l.pad * mix.pad, now, 0.4);
-    this.layers.pulse.gain.setTargetAtTime(l.pulse * mix.pulse, now, 0.4);
-    this.layers.melody.gain.setTargetAtTime(l.melody * mix.melody, now, 0.5);
-    this.layers.extra.gain.setTargetAtTime(l.extra * mix.extra, now, 0.6);
-    this.companionGains.forEach((g, i) => g.gain.setTargetAtTime((l.companions[i] ?? 0) * mix.companion, now, 0.8));
-
     const [lo, hi] = this.cfg.padCutoff;
-    const cut = lo + (hi - lo) * calm;
-    if (Math.abs(cut - this.cutoff) > 10) {
-      this.cutoff = cut;
-      this.pad.filter.frequency.setTargetAtTime(cut, now, 0.5);
+    this.targetCut = lo + (hi - lo) * calm;
+  }
+
+  // called at AUDIO_AUTOMATION.interval, dt = time since the last call
+  update(dt: number): void {
+    const A = AUDIO_AUTOMATION;
+    const mix = this.cfg.mix;
+    const t = this.target;
+    for (const k of ['pad', 'pulse', 'melody', 'extra'] as const) {
+      const goal = t[k] * mix[k];
+      this.shown[k] = approach(this.shown[k], goal, dt, A.layerSmooth[k], A.gainStep / 2);
+      this.pushed[k] = push(this.layers[k].gain, this.shown[k], this.pushed[k], A.gainStep, goal);
     }
+    this.companionGains.forEach((g, i) => {
+      const goal = (t.companions[i] ?? 0) * mix.companion;
+      this.shownComp[i] = approach(this.shownComp[i], goal, dt, A.layerSmooth.companion, A.gainStep / 2);
+      this.pushedComp[i] = push(g.gain, this.shownComp[i], this.pushedComp[i], A.gainStep, goal);
+    });
+    this.shownBpm = approach(this.shownBpm, this.targetBpm, dt, A.tempoSmooth, A.bpmStep / 2);
+    this.pushedBpm = push(Tone.getTransport().bpm, this.shownBpm, this.pushedBpm, A.bpmStep, this.targetBpm);
+    this.shownCut = approach(this.shownCut, this.targetCut, dt, A.cutoffSmooth, A.cutoffStep / 2);
+    this.pushedCut = push(this.pad.filter.frequency, this.shownCut, this.pushedCut, A.cutoffStep, this.targetCut);
   }
 
   // bright rising arpeggio on top of whatever is playing

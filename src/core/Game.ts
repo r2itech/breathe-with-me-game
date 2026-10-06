@@ -114,6 +114,7 @@ export class Game {
       }
       this.input.update(dt);
       this.scenes.update(dt);
+      this.audio.update(dt);
       this.stage.position.set(this.offX + this.shakeX * this.scale, this.offY + this.shakeY * this.scale);
     });
     if (perfOn) new PerfOverlay(this);
