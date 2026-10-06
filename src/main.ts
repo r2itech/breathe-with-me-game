@@ -1,3 +1,5 @@
+// first, so the perf overlay can count AudioContexts before Tone makes one
+import './core/perfProbe';
 // latin only, the game text is English and the other subsets would just ship unused
 import '@fontsource/quicksand/latin-400.css';
 import '@fontsource/quicksand/latin-500.css';

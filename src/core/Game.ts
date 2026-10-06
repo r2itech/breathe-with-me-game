@@ -2,9 +2,11 @@ import { Application, Container, Graphics } from 'pixi.js';
 import { AudioEngine } from '../audio/AudioEngine';
 import { PERF } from '../data/levels';
 import { TEXT } from '../data/text';
+import { PerfOverlay } from '../ui/PerfOverlay';
 import { Input } from './Input';
 import { RotatePrompt, showToast, SoundButton } from './overlays';
 import { canFullscreen, isElectron, isIOS, isPortrait, isTouch, safeAreaInsets } from './platform';
+import { perfOn } from './perfProbe';
 import { SceneManager } from './SceneManager';
 import { Save } from './Save';
 import { Settings } from './Settings';
@@ -126,6 +128,7 @@ export class Game {
       this.scenes.update(dt);
       this.stage.position.set(this.offX + this.shakeX * this.scale, this.offY + this.shakeY * this.scale);
     });
+    if (perfOn) new PerfOverlay(this);
   }
 
   static async create(): Promise<Game> {
@@ -141,6 +144,11 @@ export class Game {
     });
     document.body.appendChild(app.canvas);
     return new Game(app);
+  }
+
+  // current frame rate cap, 0 = none
+  get fpsLimit(): number {
+    return this.fpsCap;
   }
 
   // local logical coords from a DOM event, used by sliders
