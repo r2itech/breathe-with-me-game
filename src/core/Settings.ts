@@ -1,6 +1,9 @@
 const KEY = 'breathe-with-me.settings.v1';
 
+export type AudioQuality = 'auto' | 'low' | 'high';
+
 export interface SettingsData {
+  audioQuality: AudioQuality;
   master: number;
   music: number;
   sfx: number;
@@ -9,6 +12,7 @@ export interface SettingsData {
 }
 
 const DEFAULTS: SettingsData = {
+  audioQuality: 'auto',
   master: 0.8,
   music: 0.8,
   sfx: 0.8,
@@ -34,6 +38,7 @@ export class Settings {
         }
         if (typeof p.fullscreen === 'boolean') this.data.fullscreen = p.fullscreen;
         if (typeof p.reduceMotion === 'boolean') this.data.reduceMotion = p.reduceMotion;
+        if (p.audioQuality === 'auto' || p.audioQuality === 'low' || p.audioQuality === 'high') this.data.audioQuality = p.audioQuality;
       }
     } catch {
       this.data = { ...DEFAULTS };

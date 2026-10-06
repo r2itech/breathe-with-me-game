@@ -62,6 +62,8 @@ export const TEXT = {
     fullscreen: 'Fullscreen',
     reduceMotion: 'Reduce motion & flashes',
     testSound: 'Test sound',
+    audioQuality: 'Audio quality',
+    quality: { auto: 'Auto', low: 'Low', high: 'High' },
     on: 'On',
     off: 'Off',
   },

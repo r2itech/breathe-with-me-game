@@ -35,6 +35,7 @@ export class SceneManager {
       this.next.destroy();
     }
     this.next = scene;
+    this.onTransition?.();
     this.fadeDir = 1;
     this.fadeSpeed = 1 / Math.max(0.05, fadeTime);
     if (!this.current) this.fadeAlpha = 1;
@@ -62,6 +63,8 @@ export class SceneManager {
 
   // fired whenever the visible screen changes, the history guard listens
   onChange: (() => void) | null = null;
+  // a new scene was requested (it's already been built by then)
+  onTransition: (() => void) | null = null;
 
   get deep(): boolean {
     return this.overlays.length > 0 || !!this.current?.deep;

@@ -1,23 +1,31 @@
 import * as Tone from 'tone';
-import { isIOS, isTouch } from '../core/platform';
+import { isAndroid, isIOS, isTouch } from '../core/platform';
 import type { SettingsData } from '../core/Settings';
-import { AUDIO, AUDIO_AUTOMATION, MENU_MUSIC, type InstrumentKind, type MusicConfig } from '../data/levels';
+import { AUDIO, AUDIO_AUTOMATION, AUDIO_TIERS, MENU_MUSIC, type AudioTier, type InstrumentKind, type MusicConfig } from '../data/levels';
 import { BreathVoice } from './BreathVoice';
 import { LevelSong, type LayerLevels } from './LevelSong';
-import { MAX_VOICES, mtof } from './instruments';
+import { mtof } from './instruments';
 
 type MenuKind = keyof typeof MENU_MUSIC;
 
 // Tone makes a default context on import, swap it before anything builds on it.
 // iOS keeps Tone's own (wrapped) context, which is known to work there. Everywhere
 // else Tone gets a plain AudioContext, so unlocking talks to the real thing and
-// not to standardized-audio-context's view of it. No sampleRate, and no latency
-// hint on Android: older Android Chrome builds are picky about anything non-default.
-if (isIOS) {
-  Tone.setContext(new Tone.Context({ latencyHint: 'playback', lookAhead: 0.15 }), true);
-} else if (typeof AudioContext === 'function') {
-  Tone.setContext(new AudioContext(), true);
-  if (isTouch) Tone.getContext().lookAhead = 0.15;
+// not to standardized-audio-context's view of it. Never a sampleRate. The latency
+// hint can't change later, so it's picked from the tier we start on.
+function setupContext(tier: AudioTier): void {
+  if (isIOS) {
+    Tone.setContext(new Tone.Context({ latencyHint: 'playback' }), true);
+  } else if (typeof AudioContext === 'function') {
+    let ctx: AudioContext;
+    try {
+      // low tier: bigger buffers, so a busy main thread doesn't underrun it
+      ctx = tier === 'low' ? new AudioContext({ latencyHint: 'playback' }) : new AudioContext();
+    } catch {
+      ctx = new AudioContext();
+    }
+    Tone.setContext(ctx, true);
+  }
 }
 
 // events that count as user activation for audio (touchstart/pointerdown don't on Android)
@@ -75,7 +83,7 @@ export class AudioEngine {
   private heart!: Tone.MembraneSynth;
   private blip!: Tone.PolySynth;
   private thud!: Tone.MembraneSynth;
-  private stab!: Tone.FMSynth;
+  private stab!: Tone.FMSynth | Tone.Synth;
   private song: LevelSong | null = null;
   private pending: SongRequest | null = null;
   private currentMenu: MenuKind | null = null;
@@ -87,6 +95,11 @@ export class AudioEngine {
   private silentEl: HTMLAudioElement | null = null;
   private listening = false;
   private automationAcc = 0;
+  private currentReq: SongRequest | null = null;
+  tier: AudioTier;
+  // auto quality saw the device struggle, stays low for the session
+  private autoLow = false;
+  onTierChange: ((tier: AudioTier) => void) | null = null;
   private unlockAttempts = 0;
   private lastError = '';
   // fired whenever running/unlocked may have changed
@@ -94,6 +107,9 @@ export class AudioEngine {
 
   constructor(settings: SettingsData) {
     this.settings = settings;
+    this.tier = this.resolveTier();
+    setupContext(this.tier);
+    this.applyLookAhead();
     this.hold('muted', AudioEngine.isMuted(settings));
     Tone.getContext().on('statechange', () => this.checkState());
     this.listen(true);
@@ -237,17 +253,75 @@ export class AudioEngine {
     }
   }
 
-  private build(): void {
-    // desktop keeps it snappy, phones keep the bigger playback lookahead
-    if (!isTouch) Tone.getContext().lookAhead = 0.05;
+  private resolveTier(): AudioTier {
+    const q = this.settings.audioQuality;
+    if (q !== 'auto') return q;
+    return this.autoLow || isAndroid ? 'low' : 'high';
+  }
 
+  private applyLookAhead(): void {
+    const t = AUDIO_TIERS;
+    Tone.getContext().lookAhead = this.tier === 'low' ? t.low.lookAhead : isTouch ? t.high.lookAhead : t.high.lookAheadDesktop;
+  }
+
+  // auto quality: the device is struggling, go low for the rest of the session
+  degrade(): void {
+    if (this.autoLow) return;
+    this.autoLow = true;
+    this.refreshTier();
+  }
+
+  private refreshTier(): void {
+    const tier = this.resolveTier();
+    if (tier === this.tier) return;
+    this.tier = tier;
+    this.applyLookAhead();
+    if (this.ready) this.rebuildTier();
+    this.onTierChange?.(tier);
+  }
+
+  // everything that depends on the tier, built fresh; the old nodes fade and go
+  private buildTierNodes(): void {
+    const t = AUDIO_TIERS[this.tier];
+    const mono = this.tier === 'low';
+    this.reverb = new Tone.Reverb({ decay: t.reverbDecay, preDelay: 0.02, wet: Math.min(0.3, t.reverbWetMax) }).connect(this.musicBus);
+    this.playerBreath = new BreathVoice(this.sfxBus, 0, AUDIO.breathGain, mono);
+    this.npcBreath = new BreathVoice(this.sfxBus, AUDIO.npcPan, AUDIO.npcBreathGain, mono);
+    // spike stab: FM on high, a plain oscillator on low
+    this.stab =
+      this.tier === 'low'
+        ? new Tone.Synth({ oscillator: { type: 'triangle' }, envelope: { attack: 0.02, decay: 0.8, sustain: 0.1, release: 0.6 }, volume: -18 })
+        : new Tone.FMSynth({
+            harmonicity: 1.41,
+            modulationIndex: 8,
+            envelope: { attack: 0.02, decay: 0.8, sustain: 0.1, release: 1 },
+            volume: -18,
+          });
+    this.stab.connect(this.sfxBus);
+  }
+
+  private rebuildTier(): void {
+    this.playerBreath.silence();
+    this.npcBreath.silence();
+    const old = [this.reverb, this.playerBreath, this.npcBreath, this.stab];
+    this.buildTierNodes();
+    this.blip.maxPolyphony = AUDIO_TIERS[this.tier].polyphony;
+    const req = this.currentReq;
+    if (req) {
+      this.startSongInternal(req, 0.3);
+      if (this.paused) Tone.getTransport().pause();
+    }
+    // after the old song's fade + dispose
+    window.setTimeout(() => {
+      for (const n of old) n.dispose();
+    }, 4000);
+  }
+
+  private build(): void {
     this.master = new Tone.Gain(1).toDestination();
     this.musicBus = new Tone.Gain(1).connect(this.master);
     this.sfxBus = new Tone.Gain(1).connect(this.master);
-    this.reverb = new Tone.Reverb({ decay: 2.5, preDelay: 0.02, wet: 0.3 }).connect(this.musicBus);
-
-    this.playerBreath = new BreathVoice(this.sfxBus, 0, AUDIO.breathGain);
-    this.npcBreath = new BreathVoice(this.sfxBus, AUDIO.npcPan, AUDIO.npcBreathGain);
+    this.buildTierNodes();
 
     const heartLp = new Tone.Filter({ type: 'lowpass', frequency: 180 }).connect(this.sfxBus);
     this.heart = new Tone.MembraneSynth({
@@ -262,18 +336,12 @@ export class AudioEngine {
       envelope: { attack: 0.002, decay: 0.18, sustain: 0, release: 0.12 },
       volume: -16,
     }).connect(this.sfxBus);
-    this.blip.maxPolyphony = MAX_VOICES;
+    this.blip.maxPolyphony = AUDIO_TIERS[this.tier].polyphony;
     this.thud = new Tone.MembraneSynth({
       pitchDecay: 0.02,
       octaves: 3,
       envelope: { attack: 0.001, decay: 0.12, sustain: 0, release: 0.05 },
       volume: -14,
-    }).connect(this.sfxBus);
-    this.stab = new Tone.FMSynth({
-      harmonicity: 1.41,
-      modulationIndex: 8,
-      envelope: { attack: 0.02, decay: 0.8, sustain: 0.1, release: 1 },
-      volume: -18,
     }).connect(this.sfxBus);
 
     this.ready = true;
@@ -289,6 +357,7 @@ export class AudioEngine {
   applySettings(s: SettingsData): void {
     this.settings = s;
     this.hold('muted', AudioEngine.isMuted(s));
+    this.refreshTier();
     if (!this.ready) return;
     this.master.gain.rampTo(s.master, 0.1);
     this.musicBus.gain.rampTo(s.music, 0.1);
@@ -310,6 +379,7 @@ export class AudioEngine {
   stopSong(fade = 1.2): void {
     this.pending = null;
     this.currentMenu = null;
+    this.currentReq = null;
     if (this.song) {
       this.song.fadeOut(fade);
       this.song = null;
@@ -327,10 +397,11 @@ export class AudioEngine {
     this.startSongInternal(req);
   }
 
-  private startSongInternal(req: SongRequest): void {
-    if (this.song) this.song.fadeOut(1);
-    this.reverb.wet.rampTo(req.music.reverb, 1);
-    this.song = new LevelSong(req.music, this.reverb, req.companions, req.period);
+  private startSongInternal(req: SongRequest, fade = 1): void {
+    if (this.song) this.song.fadeOut(fade);
+    this.currentReq = req;
+    this.reverb.wet.rampTo(Math.min(req.music.reverb, AUDIO_TIERS[this.tier].reverbWetMax), 1);
+    this.song = new LevelSong(req.music, this.reverb, req.companions, req.period, this.tier);
     if (req.menu) {
       const l = MENU_MUSIC[req.menu].layers;
       this.song.setLayers({ ...l, companions: req.companions.map(() => 0.6) }, 1);

@@ -1,7 +1,7 @@
 import * as Tone from 'tone';
-import { AUDIO, AUDIO_AUTOMATION, type InstrumentKind, type MusicConfig } from '../data/levels';
+import { AUDIO, AUDIO_AUTOMATION, AUDIO_TIERS, type AudioTier, type InstrumentKind, type MusicConfig } from '../data/levels';
 import { approach, push } from './automation';
-import { makeInstrument, makePad, mtof, type Instrument } from './instruments';
+import { makeInstrument, makePad, makeSimpleVoice, mtof, type Instrument } from './instruments';
 
 export interface LayerLevels {
   pad: number;
@@ -27,7 +27,9 @@ export class LevelSong {
   private bell: Instrument;
   private kick: Tone.MembraneSynth;
   private hat: Tone.NoiseSynth;
-  private bass: Tone.MonoSynth;
+  private bass: Tone.MonoSynth | Tone.Synth;
+  private low: boolean;
+  private companionCount: number;
   private loops: Tone.Loop[] = [];
   private disposables: { dispose(): void }[] = [];
   private bar = 0;
@@ -53,18 +55,21 @@ export class LevelSong {
     dest: Tone.ToneAudioNode,
     companions: InstrumentKind[],
     period: number,
+    private tier: AudioTier = 'high',
   ) {
+    this.low = tier === 'low';
+    this.companionCount = companions.length;
     this.out = new Tone.Gain(0).connect(dest);
     const mk = () => new Tone.Gain(0).connect(this.out);
     this.layers = { pad: mk(), pulse: mk(), melody: mk(), extra: mk() };
 
-    this.pad = makePad(cfg.padCutoff[0]);
+    this.pad = makePad(cfg.padCutoff[0], tier);
     this.pad.filter.connect(this.layers.pad);
     this.targetCut = this.shownCut = this.pushedCut = cfg.padCutoff[0];
 
-    this.lead = makeInstrument(cfg.signature);
+    this.lead = makeInstrument(cfg.signature, tier);
     this.lead.output.connect(this.layers.melody);
-    this.bell = makeInstrument('musicbox');
+    this.bell = makeInstrument('musicbox', tier);
     this.bell.output.connect(this.layers.extra);
 
     this.kick = new Tone.MembraneSynth({
@@ -80,17 +85,25 @@ export class LevelSong {
     });
     const hatFilter = new Tone.Filter({ type: 'highpass', frequency: 6000 });
     this.hat.chain(hatFilter, this.layers.pulse);
-    this.bass = new Tone.MonoSynth({
-      oscillator: { type: cfg.pulse === 'chip' ? 'square' : 'sine' },
-      envelope: { attack: 0.01, decay: 0.3, sustain: 0.4, release: 0.4 },
-      filterEnvelope: { attack: 0.01, decay: 0.2, sustain: 0.3, release: 0.3, baseFrequency: 120, octaves: 2.5 },
-      volume: cfg.pulse === 'chip' ? -22 : -14,
-    }).connect(this.layers.pulse);
+    const bassType = cfg.pulse === 'chip' ? 'square' : 'sine';
+    const bassVolume = cfg.pulse === 'chip' ? -22 : -14;
+    // low: no filter envelope, just the oscillator
+    this.bass = this.low
+      ? new Tone.Synth({ oscillator: { type: bassType }, envelope: { attack: 0.01, decay: 0.3, sustain: 0.4, release: 0.3 }, volume: bassVolume - 2 })
+      : new Tone.MonoSynth({
+          oscillator: { type: bassType },
+          envelope: { attack: 0.01, decay: 0.3, sustain: 0.4, release: 0.4 },
+          filterEnvelope: { attack: 0.01, decay: 0.2, sustain: 0.3, release: 0.3, baseFrequency: 120, octaves: 2.5 },
+          volume: bassVolume,
+        });
+    this.bass.connect(this.layers.pulse);
     this.disposables.push(hatFilter);
 
-    for (const kind of companions) {
+    // low: all companions merged into one simple voice on one gain
+    const kinds = this.low ? companions.slice(0, 1) : companions;
+    for (const kind of kinds) {
       const g = new Tone.Gain(0).connect(this.out);
-      const inst = makeInstrument(kind);
+      const inst = this.low ? makeSimpleVoice('keys') : makeInstrument(kind, tier);
       inst.output.connect(g);
       this.companionGains.push(g);
       this.companionInst.push(inst);
@@ -129,10 +142,11 @@ export class LevelSong {
       new Tone.Loop((time) => {
         const d = this.chordDegree();
         const tones = [d, d + 2, d + 4];
-        if (cfg.seventh) tones.push(d + 6);
+        // low has 3 voices: triad only
+        if (cfg.seventh && !this.low) tones.push(d + 6);
         const freqs = tones.map((x) => mtof(this.note(x)));
         const barSec = Tone.Time('1m').toSeconds();
-        if (this.on.pad) this.pad.synth.triggerAttackRelease(freqs, barSec * 0.95, time, 0.6);
+        if (this.on.pad) this.pad.synth.triggerAttackRelease(freqs, barSec * (this.low ? 0.92 : 0.95), time, 0.6);
         this.bar++;
       }, '1m').start(0),
     );
@@ -178,11 +192,13 @@ export class LevelSong {
         }
 
         // companions each take a slice of the beat so they don't pile up
-        this.companionInst.forEach((inst, i) => {
-          if (!this.companionOn[i] || (s + i * 2) % 4 !== 0) return;
+        const parts = this.low ? Math.min(this.companionCount, AUDIO_TIERS.low.companionParts) : this.companionCount;
+        for (let i = 0; i < parts; i++) {
+          const slot = this.low ? 0 : i;
+          if (!this.companionOn[slot] || (s + i * 2) % 4 !== 0) continue;
           const tone = [0, 2, 4, 6][(Math.floor(s / 4) + i) % 4];
-          inst.play(mtof(this.note(cd + tone, i % 2 === 0 ? 1 : 0)), eighth * 2.5, time + i * 0.01, 0.45);
-        });
+          this.companionInst[slot].play(mtof(this.note(cd + tone, i % 2 === 0 ? 1 : 0)), eighth * 2.5, time + i * 0.01, 0.45);
+        }
       }, '8n').start(0),
     );
   }
@@ -195,6 +211,7 @@ export class LevelSong {
   setLayers(l: LayerLevels, calm: number): void {
     const mix = this.cfg.mix;
     const live = (v: number) => v > 0.01;
+    if (this.low) l = this.limitLayers(l);
     this.target = l;
     this.on.pad = live(l.pad * mix.pad);
     this.on.pulse = live(l.pulse * mix.pulse);
@@ -203,6 +220,25 @@ export class LevelSong {
     this.companionOn = this.companionGains.map((_, i) => live((l.companions[i] ?? 0) * mix.companion));
     const [lo, hi] = this.cfg.padCutoff;
     this.targetCut = lo + (hi - lo) * calm;
+  }
+
+  // low: pad + the first couple of live musical layers, companions as one
+  private limitLayers(l: LayerLevels): LayerLevels {
+    const comp = l.companions.length ? Math.max(...l.companions) : 0;
+    const out: LayerLevels = { pad: l.pad, pulse: 0, melody: 0, extra: 0, companions: this.companionGains.map(() => 0) };
+    let left = AUDIO_TIERS.low.musicLayers;
+    for (const k of AUDIO_TIERS.low.layerPriority) {
+      if (left <= 0) break;
+      if (k === 'companions') {
+        if (comp <= 0.01 || !out.companions.length) continue;
+        out.companions[0] = comp;
+      } else {
+        if (l[k] <= 0.01) continue;
+        out[k] = l[k];
+      }
+      left--;
+    }
+    return out;
   }
 
   // called at AUDIO_AUTOMATION.interval, dt = time since the last call
@@ -231,9 +267,10 @@ export class LevelSong {
     const now = Tone.now() + 0.05;
     const cd = this.chordDegree();
     const tones = [0, 2, 4, 7, 9, 11, 14];
+    const len = AUDIO_TIERS[this.tier].bloomNote;
     tones.forEach((t, i) => {
-      this.bell.play(mtof(this.note(cd + t, 1)), 0.3, now + i * 0.14, 0.5);
-      this.lead.play(mtof(this.note(cd + t, 0)), 0.3, now + i * 0.14 + 0.07, 0.35);
+      this.bell.play(mtof(this.note(cd + t, 1)), len, now + i * 0.14, 0.5);
+      this.lead.play(mtof(this.note(cd + t, 0)), len, now + i * 0.14 + 0.07, 0.35);
     });
     this.layers.extra.gain.setTargetAtTime(this.cfg.mix.extra * 1.5, now, 0.3);
   }

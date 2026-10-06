@@ -296,6 +296,48 @@ export const AUDIO_AUTOMATION = {
   layerSmooth: { pad: 0.4, pulse: 0.4, melody: 0.5, extra: 0.6, companion: 0.8 },
 };
 
+export type AudioTier = 'low' | 'high';
+
+// low = cheap enough for a 2018 mid-range Android; high = the full sound
+export const AUDIO_TIERS = {
+  high: {
+    polyphony: 6,
+    // one pad chord rings out under the next, 4 notes each
+    padPolyphony: 8,
+    reverbDecay: 2.5,
+    reverbWetMax: 1,
+    lookAhead: 0.15,
+    lookAheadDesktop: 0.05,
+    bloomNote: 0.3,
+  },
+  low: {
+    polyphony: 3,
+    padPolyphony: 3,
+    reverbDecay: 1.2,
+    reverbWetMax: 0.2,
+    lookAhead: 0.3,
+    bloomNote: 0.12,
+    // musical layers allowed on top of the pad drone, first ones win
+    musicLayers: 2,
+    layerPriority: ['melody', 'pulse', 'companions', 'extra'] as const,
+    // companions share one simple voice, this many parts of it
+    companionParts: 2,
+    // touch devices on low also give the main thread room
+    fpsCap: 30,
+    resolution: 1,
+  },
+};
+
+// auto quality drops to low after this many long main-thread tasks in a window
+export const LONG_TASKS = {
+  minMs: 100,
+  count: 3,
+  window: 10,
+  // loading and scene builds hitch on their own, don't count those
+  warmup: 8,
+  afterSceneChange: 3,
+};
+
 export interface SpikeConfig {
   // seconds of calm before this spike
   delay: number;

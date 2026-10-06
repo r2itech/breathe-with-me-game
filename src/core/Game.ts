@@ -1,6 +1,6 @@
 import { Application, Container, Graphics } from 'pixi.js';
 import { AudioEngine } from '../audio/AudioEngine';
-import { PERF } from '../data/levels';
+import { AUDIO_TIERS, LONG_TASKS, PERF } from '../data/levels';
 import { TEXT } from '../data/text';
 import { PerfOverlay } from '../ui/PerfOverlay';
 import { Input } from './Input';
@@ -16,6 +16,9 @@ const IOS_HINT_KEY = 'breathe-with-me.ios-hint';
 
 // title/map drop to their idle frame rate after this long without input
 const IDLE_AFTER = 30;
+
+// phones: 1.5x is plenty at arm's length, a 3x retina fill heats them up fast
+const BASE_RESOLUTION = Math.min(window.devicePixelRatio || 1, isTouch ? 1.5 : 2);
 
 // Pixi truncates the frame delta to whole ms before comparing it to the cap,
 // so a plain 60 on a 120 Hz screen lands on 40. aim a hair above instead.
@@ -49,6 +52,9 @@ export class Game {
   private soundIconTimer = 0;
   private fpsCap = 0;
   private idle = 0;
+  // start times (ms) of recent long main-thread tasks
+  private longTasks: number[] = [];
+  private longTaskQuietUntil = 0;
   private fpsTime = 0;
   private fpsFrames = 0;
   private slowFor = 0;
@@ -62,6 +68,7 @@ export class Game {
     this.audio = new AudioEngine(this.settings.data);
     this.soundIcon = new SoundIcon(TEXT.platform.enableSound, () => this.audio.retryUnlock());
     this.audio.onStateChange = () => this.syncSoundIcon();
+    this.audio.onTierChange = () => this.applyResolution();
     this.input = new Input(app.canvas);
     this.input.onGesture(() => (this.idle = 0));
     this.input.onFirstInput(() => this.maybeIOSHint());
@@ -89,8 +96,16 @@ export class Game {
     // iOS doesn't always fire visibilitychange when the page goes into the back/forward cache
     window.addEventListener('pagehide', () => this.audio.hold('hidden', true));
     window.addEventListener('pageshow', () => this.audio.hold('hidden', document.hidden));
+    // building and swapping scenes hitches by itself, that's not the device struggling
+    const quiet = () => (this.longTaskQuietUntil = performance.now() + LONG_TASKS.afterSceneChange * 1000);
+    this.scenes.onTransition = quiet;
+    this.scenes.onChange = () => {
+      quiet();
+      if (!isElectron) this.armHistory();
+    };
+    this.watchLongTasks();
+    this.applyResolution();
     if (!isElectron) {
-      this.scenes.onChange = () => this.armHistory();
       window.addEventListener('popstate', () => {
         this.historyArmed = false;
         this.scenes.back();
@@ -127,8 +142,7 @@ export class Game {
       resizeTo: window,
       antialias: true,
       autoDensity: true,
-      // phones: 1.5x is plenty at arm's length, a 3x retina fill heats them up fast
-      resolution: Math.min(window.devicePixelRatio || 1, isTouch ? 1.5 : 2),
+      resolution: BASE_RESOLUTION,
       powerPreference: isTouch ? 'low-power' : 'high-performance',
     });
     document.body.appendChild(app.canvas);
@@ -206,7 +220,9 @@ export class Game {
   // levels run at 60, everything else at 30, title/map at 20 once left alone
   private updateFpsCap(dt: number): void {
     this.idle = this.input.held ? 0 : this.idle + dt;
-    const cap = this.scenes.fpsCap(this.idle >= IDLE_AFTER);
+    let cap = this.scenes.fpsCap(this.idle >= IDLE_AFTER);
+    // low audio tier on a phone: leave the main thread room for the audio scheduler
+    if (isTouch && this.audio.tier === 'low') cap = Math.min(cap, AUDIO_TIERS.low.fpsCap);
     if (cap === this.fpsCap) return;
     this.fpsCap = cap;
     this.app.ticker.maxFPS = tickerCap(cap);
@@ -242,9 +258,42 @@ export class Game {
     this.slowFor = fps < PERF.minFps ? this.slowFor + PERF.sampleTime : 0;
     if (this.slowFor >= PERF.slowSeconds) {
       this.lowQuality = true;
-      // phones also give up the extra resolution
-      if (isTouch) this.app.renderer.resize(window.innerWidth, window.innerHeight, 1);
+      this.applyResolution();
+      this.audio.degrade();
     }
+  }
+
+  // phones give up the extra resolution in low quality or on the low audio tier
+  private applyResolution(): void {
+    const res = isTouch && (this.lowQuality || this.audio.tier === 'low') ? AUDIO_TIERS.low.resolution : BASE_RESOLUTION;
+    if (this.app.renderer.resolution !== res) this.app.renderer.resize(window.innerWidth, window.innerHeight, res);
+  }
+
+  // auto audio quality: a few long tasks close together = drop to the low tier.
+  // Chromium only, Safari has no longtask entries and just never triggers this
+  private watchLongTasks(): void {
+    try {
+      const obs = new PerformanceObserver((list) => {
+        const now = performance.now();
+        for (const e of list.getEntries()) {
+          if (e.duration < LONG_TASKS.minMs) continue;
+          this.longTasks.push(e.startTime);
+          if (e.startTime < LONG_TASKS.warmup * 1000 || e.startTime < this.longTaskQuietUntil) continue;
+          const recent = this.longTasks.filter((t) => t >= now - LONG_TASKS.window * 1000 && t >= this.longTaskQuietUntil && t >= LONG_TASKS.warmup * 1000);
+          if (recent.length >= LONG_TASKS.count) this.audio.degrade();
+        }
+        this.longTasks = this.longTasks.filter((t) => t >= now - LONG_TASKS.window * 1000);
+      });
+      obs.observe({ type: 'longtask', buffered: true });
+    } catch {
+      // not supported
+    }
+  }
+
+  // long tasks seen in the last window, for the perf overlay
+  get recentLongTasks(): number {
+    const from = performance.now() - LONG_TASKS.window * 1000;
+    return this.longTasks.filter((t) => t >= from).length;
   }
 
   private layout(): void {

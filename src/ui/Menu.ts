@@ -9,6 +9,8 @@ export type MenuItem = (
   | { kind: 'button'; label: string; action: () => void; disabled?: boolean; small?: boolean }
   | { kind: 'slider'; label: string; get: () => number; set: (v: number) => void }
   | { kind: 'toggle'; label: string; get: () => boolean; set: (v: boolean) => void }
+  // cycles through a few values, get() returns the label to show
+  | { kind: 'choice'; label: string; get: () => string; step: (dir: 1 | -1) => void }
 ) & {
   // platform-specific items (Quit, fullscreen) just drop out
   hidden?: boolean;
@@ -92,7 +94,7 @@ export class Menu {
         bar = new Graphics();
         bar.x = o.width / 2 - BAR_W;
         box.addChild(bar);
-      } else if (item.kind === 'toggle') {
+      } else if (item.kind === 'toggle' || item.kind === 'choice') {
         value = new Text({ text: '', style: { fontFamily: FONT, fontSize: o.size, fill: o.accent, fontWeight: '600' } });
         value.anchor.set(1, 0.5);
         value.x = o.width / 2;
@@ -191,6 +193,9 @@ export class Menu {
         } else if (row.item.kind === 'toggle') {
           row.item.set(!row.item.get());
           this.game.audio.uiMove();
+        } else if (row.item.kind === 'choice') {
+          row.item.step(d);
+          this.game.audio.uiMove();
         }
         break;
       }
@@ -218,6 +223,9 @@ export class Menu {
     } else if (item.kind === 'toggle') {
       item.set(!item.get());
       this.game.audio.uiSelect();
+    } else if (item.kind === 'choice') {
+      item.step(1);
+      this.game.audio.uiSelect();
     }
     this.refresh();
   }
@@ -226,6 +234,7 @@ export class Menu {
     const o = this.opts;
     for (const r of this.rows) {
       if (r.item.kind === 'toggle' && r.value) r.value.text = r.item.get() ? TEXT.settings.on : TEXT.settings.off;
+      if (r.item.kind === 'choice' && r.value) r.value.text = r.item.get();
       if (r.item.kind === 'slider' && r.bar) {
         const v = r.item.get();
         r.bar.clear();

@@ -8,6 +8,8 @@ export const isTouch =
 // iPadOS reports itself as a Mac, the touch points give it away
 export const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
+export const isAndroid = /Android/i.test(navigator.userAgent);
+
 export const canFullscreen = isElectron || !!document.fullscreenEnabled;
 
 // fullscreen + landscape lock, only works from inside a user gesture and not at all on iPhone.

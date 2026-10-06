@@ -2,10 +2,13 @@ import { Graphics, Text } from 'pixi.js';
 import type { Game } from '../core/Game';
 import { canFullscreen } from '../core/platform';
 import { Scene } from '../core/Scene';
+import type { AudioQuality } from '../core/Settings';
 import { FONT, VIEW_H, VIEW_W } from '../core/view';
 import { TEXT } from '../data/text';
 import { Menu } from '../ui/Menu';
 import { HowToPlayOverlay } from './HowToPlayOverlay';
+
+const QUALITIES: AudioQuality[] = ['auto', 'low', 'high'];
 
 export class SettingsOverlay extends Scene {
   private menu: Menu;
@@ -38,6 +41,15 @@ export class SettingsOverlay extends Scene {
           },
         },
         { kind: 'toggle', label: T.reduceMotion, get: () => s.data.reduceMotion, set: (v) => s.set('reduceMotion', v) },
+        {
+          kind: 'choice',
+          label: T.audioQuality,
+          get: () => T.quality[s.data.audioQuality],
+          step: (dir) => {
+            const i = QUALITIES.indexOf(s.data.audioQuality);
+            s.set('audioQuality', QUALITIES[(i + dir + QUALITIES.length) % QUALITIES.length]);
+          },
+        },
         // raw beep, no Tone: tells a device/browser problem apart from a game one
         { kind: 'button', label: T.testSound, action: () => game.audio.testBeep() },
         { kind: 'button', label: TEXT.howTo.button, action: () => game.scenes.push(new HowToPlayOverlay(game)) },

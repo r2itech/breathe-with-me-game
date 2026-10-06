@@ -7,7 +7,7 @@ export class BreathVoice {
   private noise: Tone.Noise;
   private filter: Tone.Filter;
   private gain: Tone.Gain;
-  private panner: Tone.Panner;
+  private panner: Tone.Panner | null;
   private lastLung = 0;
   // the noise source only runs while there's breath to hear
   private on = false;
@@ -19,12 +19,14 @@ export class BreathVoice {
   private freq = 700;
   private fading = false;
 
-  constructor(out: Tone.ToneAudioNode, pan: number, private level: number) {
+  // mono = no panner, for the low tier
+  constructor(out: Tone.ToneAudioNode, pan: number, private level: number, mono = false) {
     this.noise = new Tone.Noise('pink');
     this.filter = new Tone.Filter({ type: 'bandpass', frequency: 700, Q: 0.9 });
     this.gain = new Tone.Gain(0);
-    this.panner = new Tone.Panner(pan);
-    this.noise.chain(this.filter, this.gain, this.panner, out);
+    this.panner = mono ? null : new Tone.Panner(pan);
+    if (this.panner) this.noise.chain(this.filter, this.gain, this.panner, out);
+    else this.noise.chain(this.filter, this.gain, out);
   }
 
   update(dt: number, lung: number, inhaling: boolean, mute = false): void {
@@ -85,6 +87,6 @@ export class BreathVoice {
     this.noise.dispose();
     this.filter.dispose();
     this.gain.dispose();
-    this.panner.dispose();
+    this.panner?.dispose();
   }
 }
