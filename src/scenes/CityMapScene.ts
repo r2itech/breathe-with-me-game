@@ -21,6 +21,9 @@ interface Win {
   x: number;
   y: number;
   frame: Graphics;
+  // what the frame was last drawn with, so it only redraws on change
+  drawnSel: boolean | null;
+  drawnAlpha: number;
   inner: Graphics;
   warmGlow: Sprite;
   storm: Sprite[];
@@ -142,6 +145,7 @@ export class CityMapScene extends Scene {
   }
 
   private buildSkyline(r: () => number): void {
+    const skyline = new Container();
     const far = new Graphics();
     let x = -20;
     while (x < VIEW_W + 20) {
@@ -150,7 +154,6 @@ export class CityMapScene extends Scene {
       far.rect(x, VIEW_H - h, w, h).fill(0x141632);
       x += w - 10;
     }
-    this.root.addChild(far);
 
     const near = new Graphics();
     // buildings that hold the special windows
@@ -180,7 +183,9 @@ export class CityMapScene extends Scene {
         }
       }
     }
-    this.root.addChild(near, this.gridG);
+    skyline.addChild(far, near);
+    skyline.cacheAsTexture(true);
+    this.root.addChild(skyline, this.gridG);
   }
 
   private makeWindow(index: number, x: number, y: number, warm: boolean): Win {
@@ -235,11 +240,15 @@ export class CityMapScene extends Scene {
       }
     });
     this.root.addChild(box);
-    return { index, x, y, frame, inner, warmGlow, storm, companion, warm: warm ? 1 : 0, hover: 0 };
+    return { index, x, y, frame, drawnSel: null, drawnAlpha: -1, inner, warmGlow, storm, companion, warm: warm ? 1 : 0, hover: 0 };
   }
 
   private isUnlocked(i: number): boolean {
     return i <= this.maxUnlocked() && !this.opts.celebrate;
+  }
+
+  get idleFps(): number {
+    return 20;
   }
 
   enter(): void {
@@ -335,15 +344,16 @@ export class CityMapScene extends Scene {
       const sel = w.index === this.selected && !this.opts.celebrate;
       w.hover += ((sel ? 1 : 0) - w.hover) * Math.min(1, dt * 8);
 
-      const f = w.frame;
-      f.clear();
-      f.rect(-WIN_W / 2 - 4, -WIN_H / 2 - 4, WIN_W + 8, WIN_H + 8).stroke({
-        width: 3,
-        color: sel ? 0xffe6c4 : 0x3a3860,
-        alpha: unlocked ? 0.6 + 0.4 * w.hover : 0.3,
-      });
-      f.moveTo(0, -WIN_H / 2).lineTo(0, WIN_H / 2).stroke({ width: 2, color: 0x0b0b1a, alpha: 0.8 });
-      f.moveTo(-WIN_W / 2, 0).lineTo(WIN_W / 2, 0).stroke({ width: 2, color: 0x0b0b1a, alpha: 0.8 });
+      const frameAlpha = Math.round((unlocked ? 0.6 + 0.4 * w.hover : 0.3) * 50) / 50;
+      if (w.drawnSel !== sel || w.drawnAlpha !== frameAlpha) {
+        w.drawnSel = sel;
+        w.drawnAlpha = frameAlpha;
+        const f = w.frame;
+        f.clear();
+        f.rect(-WIN_W / 2 - 4, -WIN_H / 2 - 4, WIN_W + 8, WIN_H + 8).stroke({ width: 3, color: sel ? 0xffe6c4 : 0x3a3860, alpha: frameAlpha });
+        f.moveTo(0, -WIN_H / 2).lineTo(0, WIN_H / 2).stroke({ width: 2, color: 0x0b0b1a, alpha: 0.8 });
+        f.moveTo(-WIN_W / 2, 0).lineTo(WIN_W / 2, 0).stroke({ width: 2, color: 0x0b0b1a, alpha: 0.8 });
+      }
 
       w.inner.alpha = unlocked ? 0.9 : 0.35;
       w.warmGlow.alpha = w.warm * (0.55 + 0.1 * Math.sin(t * 1.5 + w.index));

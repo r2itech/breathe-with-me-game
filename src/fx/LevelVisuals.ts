@@ -1,5 +1,6 @@
 import { Container, Sprite } from 'pixi.js';
 import type { LevelRun } from '../breath/LevelRun';
+import { isTouch } from '../core/platform';
 import { VISUAL, type LevelConfig } from '../data/levels';
 import { Background } from './Background';
 import { Bloom } from './Bloom';
@@ -168,7 +169,8 @@ export class LevelVisuals {
     this.weather.setLowQuality(low);
     this.weather.update(dt, intensity, bloomAmt);
     this.bg.setWarmth(warmth);
-    this.glitch.update(dt, intensity, this.npcX, this.y, npcR, cfg.glitch && !calmMotion && !low && bloomAmt === 0);
+    // RGB split stays off on phones, it's a lot of additive fill for a flicker
+    this.glitch.update(dt, intensity, this.npcX, this.y, npcR, cfg.glitch && !calmMotion && !low && !isTouch && bloomAmt === 0);
     this.bloom.update(dt, this.centerX, this.y);
 
     this.updateShake(dt, run, calmMotion);

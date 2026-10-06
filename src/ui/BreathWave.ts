@@ -51,6 +51,7 @@ export class BreathWave {
     this.key.position.set(NOW_X - 58, TOP + WAVE.height / 2);
     this.key.visible = showKey;
     this.root.addChild(this.bg, this.glow, this.lines, this.key);
+    this.drawBg();
   }
 
   // one bright throb on the guide line, after a few misses in a row
@@ -75,23 +76,24 @@ export class BreathWave {
       this.time += dt;
       const grace = run.cfg.grace;
       const nearEdge = g.fromTransition < grace || g.toTransition < grace;
-      this.samples.push({
-        t: this.time,
-        guide: g.lung,
-        npc: npc.lung,
-        player: p.lung,
-        match: p.hasBreathed && (p.state === g.state || nearEdge),
-        spike: run.inSpike && !run.follow,
-      });
       const cutoff = this.time - WAVE.historySeconds;
-      while (this.samples.length && this.samples[0].t < cutoff) this.samples.shift();
+      // recycle the expired samples instead of making a new one every frame
+      let s: Sample | undefined;
+      while (this.samples.length && this.samples[0].t < cutoff) s = this.samples.shift();
+      s ??= { t: 0, guide: 0, npc: 0, player: 0, match: false, spike: false };
+      s.t = this.time;
+      s.guide = g.lung;
+      s.npc = npc.lung;
+      s.player = p.lung;
+      s.match = p.hasBreathed && (p.state === g.state || nearEdge);
+      s.spike = run.inSpike && !run.follow;
+      this.samples.push(s);
     }
 
     // zoom so about two guide cycles fit ahead of the now line
     const want = (VIEW_W - NOW_X) / (WAVE.previewCycles * Math.max(1, g.period));
     this.pps += (want - this.pps) * Math.min(1, dt * 1.2);
 
-    this.drawBg();
     this.lines.clear();
     this.glow.clear();
 

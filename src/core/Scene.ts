@@ -16,6 +16,14 @@ export abstract class Scene {
   get deep(): boolean {
     return true;
   }
+  // frame rate cap while this is on top
+  get maxFps(): number {
+    return 30;
+  }
+  // cap once nobody has touched anything for a while, 0 = stays at maxFps
+  get idleFps(): number {
+    return 0;
+  }
   abstract update(dt: number): void;
 
   destroy(): void {

@@ -28,6 +28,7 @@ export class TitleScene extends Scene {
   private circle = new BreathCircle();
   private prompt: Text;
   private dots = new Graphics();
+  private dotsDrawn = -1;
   private titleBox = new Container();
   private menuLayer = new Container();
   private menu: Menu | null = null;
@@ -86,6 +87,10 @@ export class TitleScene extends Scene {
 
   get deep(): boolean {
     return false;
+  }
+
+  get idleFps(): number {
+    return 20;
   }
 
   exit(): void {
@@ -210,12 +215,15 @@ export class TitleScene extends Scene {
     if (b.hasBreathed && !this.revealed) this.prompt.text = TEXT.title.promptBreathe;
 
     const d = this.dots;
-    d.clear();
-    if (ease < 1) {
+    const dotsAlpha = (1 - ease) * Math.min(1, this.t);
+    d.alpha = dotsAlpha;
+    d.visible = dotsAlpha > 0.001;
+    if (this.dotsDrawn !== this.count) {
+      this.dotsDrawn = this.count;
+      d.clear();
       for (let i = 0; i < BREATHS_TO_REVEAL; i++) {
         const x = VIEW_W / 2 + (i - 1) * 22;
-        const filled = i < this.count;
-        d.circle(x, VIEW_H - 112, 4).fill({ color: COLOR, alpha: (filled ? 0.9 : 0.2) * (1 - ease) * Math.min(1, this.t) });
+        d.circle(x, VIEW_H - 112, 4).fill({ color: COLOR, alpha: i < this.count ? 0.9 : 0.2 });
       }
     }
 

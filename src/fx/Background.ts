@@ -21,9 +21,12 @@ export class Background {
       this.root.addChild(s);
     }
     this.warm.alpha = 0;
+    this.warm.visible = false;
   }
 
   setWarmth(w: number): void {
     this.warm.alpha = Math.max(0, Math.min(1, w));
+    // a full-screen sprite at 0 alpha still costs a full-screen fill
+    this.warm.visible = this.warm.alpha > 0.001;
   }
 }

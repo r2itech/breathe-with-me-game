@@ -20,6 +20,7 @@ export class BreathCircle {
   private body = new Graphics();
   private echo = new Graphics();
   private seed = Math.random() * 100;
+  private pts = new Array<number>(POINTS * 2).fill(0);
   x = 0;
   y = 0;
 
@@ -40,7 +41,7 @@ export class BreathCircle {
     this.glow.alpha = 0.35 + 0.5 * look.glow;
 
     const s = this.seed;
-    const pts: number[] = [];
+    const pts = this.pts;
     for (let i = 0; i < POINTS; i++) {
       const a = (i / POINTS) * Math.PI * 2;
       let k =
@@ -50,7 +51,8 @@ export class BreathCircle {
       k *= wobble * 0.12;
       if (tremble > 0) k += Math.sin(a * 23 + t * 47 + s) * tremble * 0.035 + Math.sin(a * 31 - t * 61) * tremble * 0.02;
       const rr = r * (1 + k);
-      pts.push(Math.cos(a) * rr, Math.sin(a) * rr);
+      pts[i * 2] = Math.cos(a) * rr;
+      pts[i * 2 + 1] = Math.sin(a) * rr;
     }
     const b = this.body;
     b.clear();

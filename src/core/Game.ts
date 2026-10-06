@@ -12,6 +12,15 @@ import { VIEW_W, VIEW_H } from './view';
 
 const IOS_HINT_KEY = 'breathe-with-me.ios-hint';
 
+// title/map drop to their idle frame rate after this long without input
+const IDLE_AFTER = 30;
+
+// Pixi truncates the frame delta to whole ms before comparing it to the cap,
+// so a plain 60 on a 120 Hz screen lands on 40. aim a hair above instead.
+function tickerCap(fps: number): number {
+  return fps ? 1000 / (Math.floor(1000 / fps) - 1) : 0;
+}
+
 export class Game {
   readonly app: Application;
   readonly stage = new Container();
@@ -35,8 +44,10 @@ export class Game {
   private offY = 0;
   private rotate: RotatePrompt | null = null;
   private soundButton: SoundButton | null = null;
-  // seconds left before it shows, -1 once it's not needed anymore this session
-  private soundButtonTimer = -1;
+  // the passive unlock had its couple of seconds, the button may show now
+  private soundArmed = false;
+  private fpsCap = 0;
+  private idle = 0;
   private fpsTime = 0;
   private fpsFrames = 0;
   private slowFor = 0;
@@ -49,11 +60,17 @@ export class Game {
     this.audio = new AudioEngine(this.settings.data);
     // audio context can only start from a real input event, and on mobile the
     // first try often isn't enough, so every gesture gets to have another go
-    this.input.onGesture(() => void this.audio.init());
+    this.input.onGesture(() => {
+      this.idle = 0;
+      void this.audio.init().finally(() => this.syncSoundButton());
+    });
     this.input.onFirstInput(() => {
       this.maybeIOSHint();
       // give the automatic unlock a couple of seconds before offering the button
-      if (this.soundButton) this.soundButtonTimer = 1.2;
+      window.setTimeout(() => {
+        this.soundArmed = true;
+        this.syncSoundButton();
+      }, 1200);
     });
     this.settings.onChange((s) => this.audio.applySettings(s));
 
@@ -70,8 +87,7 @@ export class Game {
       // mobile engine accepts, for when the passive listeners in Input.ts don't
       this.soundButton = new SoundButton(TEXT.platform.enableSound, () => {
         this.soundButton!.visible = false;
-        this.soundButtonTimer = 1.5;
-        void this.audio.init();
+        void this.audio.init().finally(() => this.syncSoundButton());
       });
     }
     window.addEventListener('resize', () => this.layout());
@@ -105,7 +121,7 @@ export class Game {
       // clamp so it doesn't jump when the window loses focus
       const dt = Math.min(ticker.deltaMS / 1000, 0.1);
       this.trackFps(ticker.deltaMS / 1000);
-      this.updateSoundButton(dt);
+      this.updateFpsCap(dt);
       this.input.update(dt);
       this.scenes.update(dt);
       this.stage.position.set(this.offX + this.shakeX * this.scale, this.offY + this.shakeY * this.scale);
@@ -119,8 +135,9 @@ export class Game {
       resizeTo: window,
       antialias: true,
       autoDensity: true,
-      resolution: Math.min(window.devicePixelRatio || 1, 2),
-      powerPreference: 'high-performance',
+      // phones: 1.5x is plenty at arm's length, a 3x retina fill heats them up fast
+      resolution: Math.min(window.devicePixelRatio || 1, isTouch ? 1.5 : 2),
+      powerPreference: isTouch ? 'low-power' : 'high-performance',
     });
     document.body.appendChild(app.canvas);
     return new Game(app);
@@ -176,33 +193,40 @@ export class Game {
     if (document.hidden) {
       this.scenes.autoPause();
       this.input.releaseAll();
-      this.app.ticker.stop();
       this.audio.hold('hidden', true);
     } else {
-      this.app.ticker.start();
       this.audio.hold('hidden', false);
     }
+    this.updateTicker();
   }
 
-  // shows the explicit sound button once the passive unlock has had a couple
-  // of seconds to work and clearly hasn't; hides it again the moment audio
-  // is actually running, from the passive path or the button itself
-  private updateSoundButton(dt: number): void {
-    if (!this.soundButton) return;
-    if (this.audio.unlocked) {
-      if (this.soundButtonTimer !== -1) {
-        this.soundButtonTimer = -1;
-        this.soundButton.visible = false;
-      }
-      return;
-    }
-    if (this.soundButtonTimer < 0) return;
-    this.soundButtonTimer -= dt;
-    if (this.soundButtonTimer <= 0) this.soundButton.visible = true;
+  // no frames at all while nothing of the game can be seen
+  private updateTicker(): void {
+    if (document.hidden || isPortrait()) this.app.ticker.stop();
+    else this.app.ticker.start();
+  }
+
+  // levels run at 60, everything else at 30, title/map at 20 once left alone
+  private updateFpsCap(dt: number): void {
+    this.idle = this.input.held ? 0 : this.idle + dt;
+    const cap = this.scenes.fpsCap(this.idle >= IDLE_AFTER);
+    if (cap === this.fpsCap) return;
+    this.fpsCap = cap;
+    this.app.ticker.maxFPS = tickerCap(cap);
+    // a capped scene isn't a slow device
+    this.fpsTime = 0;
+    this.fpsFrames = 0;
+  }
+
+  // explicit sound button once the passive unlock had a couple of seconds and
+  // clearly didn't work; re-checked after every unlock attempt
+  private syncSoundButton(): void {
+    if (this.soundButton) this.soundButton.visible = this.soundArmed && !this.audio.unlocked;
   }
 
   private trackFps(dt: number): void {
-    if (this.lowQuality) return;
+    // only levels run at 60, the rest are capped on purpose
+    if (this.lowQuality || this.fpsCap < 60) return;
     this.sinceStart += dt;
     // loading hitches and tab switches don't count
     if (this.sinceStart < PERF.warmup || dt > 0.25) return;
@@ -213,7 +237,11 @@ export class Game {
     this.fpsTime = 0;
     this.fpsFrames = 0;
     this.slowFor = fps < PERF.minFps ? this.slowFor + PERF.sampleTime : 0;
-    if (this.slowFor >= PERF.slowSeconds) this.lowQuality = true;
+    if (this.slowFor >= PERF.slowSeconds) {
+      this.lowQuality = true;
+      // phones also give up the extra resolution
+      if (isTouch) this.app.renderer.resize(window.innerWidth, window.innerHeight, 1);
+    }
   }
 
   private layout(): void {
@@ -256,5 +284,6 @@ export class Game {
       this.scenes.autoPause();
       this.input.releaseAll();
     }
+    this.updateTicker();
   }
 }

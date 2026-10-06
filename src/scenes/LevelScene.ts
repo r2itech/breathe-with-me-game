@@ -131,6 +131,11 @@ export class LevelScene extends Scene {
     this.hookEvents();
   }
 
+  // cards are just text over a slow breath
+  get maxFps(): number {
+    return this.stage === 'card' || this.stage === 'failed' || this.stage === 'result' ? 30 : 60;
+  }
+
   get levelText() {
     return TEXT.levels[this.index];
   }

@@ -73,6 +73,12 @@ export class SceneManager {
     top?.back();
   }
 
+  fpsCap(idle: boolean): number {
+    const top = this.overlays[this.overlays.length - 1] ?? this.current;
+    if (!top) return 30;
+    return idle && top.idleFps ? top.idleFps : top.maxFps;
+  }
+
   autoPause(): void {
     if (this.overlays.length || this.next) return;
     this.current?.autoPause();
