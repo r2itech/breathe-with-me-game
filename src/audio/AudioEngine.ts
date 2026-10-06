@@ -556,7 +556,7 @@ export class AudioEngine {
   }
 
   // live numbers for the ?perf=1 overlay
-  stats(): { state: string; voices: number; sampleRate: number; baseLatency: number; attempts: number; error: string } {
+  stats(): { state: string; voices: number; sampleRate: number; baseLatency: number; outputLatency: number; attempts: number; error: string } {
     const ctx = this.context;
     let voices = this.song?.voices ?? 0;
     if (this.ready) voices += this.blip.activeVoices;
@@ -565,6 +565,8 @@ export class AudioEngine {
       voices,
       sampleRate: ctx.sampleRate,
       baseLatency: ctx.baseLatency ?? 0,
+      // Safari/older Chrome don't report it
+      outputLatency: ctx.outputLatency ?? 0,
       attempts: this.unlockAttempts,
       error: this.lastError,
     };

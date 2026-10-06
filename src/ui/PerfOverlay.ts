@@ -1,5 +1,6 @@
 import type { Container, Ticker } from 'pixi.js';
 import type { Game } from '../core/Game';
+import { automation } from '../audio/automation';
 import { audioContexts } from '../core/perfProbe';
 
 const REFRESH_MS = 500;
@@ -18,6 +19,7 @@ export class PerfOverlay {
   private worst = 0;
   private work = 0;
   private workStart = 0;
+  private lastAutomation = 0;
 
   constructor(private game: Game) {
     this.el.style.cssText =
@@ -43,10 +45,13 @@ export class PerfOverlay {
     const fps = (this.frames * 1000) / this.time;
     const textures = (r.texture as { managedTextures?: readonly unknown[] }).managedTextures?.length ?? '?';
     const audio = g.audio.stats();
+    const pushes = ((automation.count - this.lastAutomation) * 1000) / this.time;
+    this.lastAutomation = automation.count;
     this.el.textContent = [
       `fps ${fps.toFixed(1)} / cap ${g.fpsLimit || 'none'}  frame ${(this.time / this.frames).toFixed(1)}ms (max ${this.worst.toFixed(1)})  work ${(this.work / this.frames).toFixed(1)}ms`,
       `objects ${countObjects(g.app.stage)}  textures ${textures}  ticker ${t.count - 2} (+2 perf)  res ${r.resolution}${g.lowQuality ? ' low' : ''}`,
-      `audio ctx ${audioContexts.live} live / ${audioContexts.created} made  ${audio.state}  ${audio.sampleRate}Hz  base ${(audio.baseLatency * 1000).toFixed(1)}ms  voices ${audio.voices}  session ${navigator.audioSession?.type ?? 'n/a'}`,
+      `audio ctx ${audioContexts.live} live / ${audioContexts.created} made  ${audio.state}  ${audio.sampleRate}Hz  base ${(audio.baseLatency * 1000).toFixed(1)}ms  out ${(audio.outputLatency * 1000).toFixed(1)}ms  voices ${audio.voices}  session ${navigator.audioSession?.type ?? 'n/a'}`,
+      `audio tier ${g.audio.tier} (${g.settings.data.audioQuality})  automation ${pushes.toFixed(1)}/s  long tasks ${g.recentLongTasks} (10s)`,
       `unlock tries ${audio.attempts}${audio.error ? `  last error ${audio.error}` : ''}`,
     ].join('\n');
 
