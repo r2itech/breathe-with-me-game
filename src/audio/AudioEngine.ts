@@ -157,6 +157,29 @@ export class AudioEngine {
     this.unlockAudio();
   }
 
+  // Settings > Test sound: a raw oscillator straight to the speakers, no Tone
+  // graph and no game volume, so silence here means the device/browser
+  testBeep(): void {
+    const ctx = this.context;
+    try {
+      void ctx.resume().catch((err: unknown) => this.noteError(err));
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const t = ctx.currentTime;
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.4, t + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.45);
+    } catch (err) {
+      this.noteError(err);
+    }
+    // muted/paused: let it ring, then back to sleep
+    if (this.ready && this.holds.size) window.setTimeout(() => this.applyHolds(), 700);
+  }
+
   private noteError(err: unknown): void {
     this.lastError = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
   }

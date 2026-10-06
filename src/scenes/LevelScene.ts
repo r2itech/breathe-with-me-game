@@ -136,6 +136,11 @@ export class LevelScene extends Scene {
     return this.stage === 'card' || this.stage === 'failed' || this.stage === 'result' ? 30 : 60;
   }
 
+  // left of the pause button
+  get soundIconSlot(): number {
+    return 76 * this.game.uiScale;
+  }
+
   get levelText() {
     return TEXT.levels[this.index];
   }

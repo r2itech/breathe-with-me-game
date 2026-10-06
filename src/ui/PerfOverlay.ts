@@ -46,7 +46,8 @@ export class PerfOverlay {
     this.el.textContent = [
       `fps ${fps.toFixed(1)} / cap ${g.fpsLimit || 'none'}  frame ${(this.time / this.frames).toFixed(1)}ms (max ${this.worst.toFixed(1)})  work ${(this.work / this.frames).toFixed(1)}ms`,
       `objects ${countObjects(g.app.stage)}  textures ${textures}  ticker ${t.count - 2} (+2 perf)  res ${r.resolution}${g.lowQuality ? ' low' : ''}`,
-      `audio ctx ${audioContexts.live} live / ${audioContexts.created} made  ${audio.state}  voices ${audio.voices}  session ${navigator.audioSession?.type ?? 'n/a'}`,
+      `audio ctx ${audioContexts.live} live / ${audioContexts.created} made  ${audio.state}  ${audio.sampleRate}Hz  base ${(audio.baseLatency * 1000).toFixed(1)}ms  voices ${audio.voices}  session ${navigator.audioSession?.type ?? 'n/a'}`,
+      `unlock tries ${audio.attempts}${audio.error ? `  last error ${audio.error}` : ''}`,
     ].join('\n');
 
     this.frames = 0;

@@ -79,6 +79,12 @@ export class SceneManager {
     return idle && top.idleFps ? top.idleFps : top.maxFps;
   }
 
+  get soundIconSlot(): number | null {
+    if (this.next) return null;
+    const top = this.overlays[this.overlays.length - 1] ?? this.current;
+    return top ? top.soundIconSlot : null;
+  }
+
   autoPause(): void {
     if (this.overlays.length || this.next) return;
     this.current?.autoPause();

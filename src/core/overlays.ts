@@ -10,13 +10,11 @@ const CSS = `
   background:rgba(12,10,26,.92);color:#f2ecff;border:1px solid rgba(255,201,163,.45);border-radius:12px;padding:10px 16px;
   font-family:Quicksand,sans-serif;font-weight:600;font-size:15px;opacity:0;transition:opacity .4s;pointer-events:none;white-space:nowrap}
 .bwm-toast.on{opacity:1}
-.bwm-sound{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(0);z-index:22;
-  display:none;align-items:center;gap:8px;background:#1a1530;color:#f2ecff;border:1px solid rgba(255,201,163,.6);border-radius:999px;
-  padding:10px 20px;font-family:Quicksand,sans-serif;font-weight:600;font-size:15px;cursor:pointer;
-  box-shadow:0 6px 24px rgba(0,0,0,.4);animation:bwm-pulse 1.8s ease-in-out infinite}
+.bwm-sound{position:fixed;z-index:19;width:44px;height:44px;display:none;align-items:center;justify-content:center;padding:0;
+  background:rgba(11,9,24,.6);color:#f2ecff;border:2px solid rgba(255,201,163,.6);border-radius:50%;cursor:pointer}
 .bwm-sound.on{display:flex}
-@keyframes bwm-pulse{0%,100%{box-shadow:0 6px 24px rgba(0,0,0,.4)}50%{box-shadow:0 6px 24px rgba(255,201,163,.35)}}
-@media (prefers-reduced-motion: reduce){.bwm-phone{animation:none}.bwm-sound{animation:none}}
+.bwm-sound svg{width:22px;height:22px}
+@media (prefers-reduced-motion: reduce){.bwm-phone{animation:none}}
 `;
 
 let styled = false;
@@ -49,27 +47,35 @@ export class RotatePrompt {
   }
 }
 
-// explicit, guaranteed-reliable fallback for when the passive gesture
-// listeners in Input.ts don't unlock audio (browsers disagree on exactly
-// which events count, and some mobile engines block it outright until the
-// tap lands on a real element). a click on an actual <button> is the one
-// gesture every engine accepts, so this is the backstop that can't fail
-// the same way the passive unlock can.
-export class SoundButton {
+const SPEAKER_OFF =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+  '<path d="M11 5 6 9H3v6h3l5 4z" fill="currentColor"/><path d="m16 9 5 6M21 9l-5 6"/></svg>';
+
+// "sound off" speaker, top-right. a tap on a real <button> is a gesture every
+// engine accepts, so it doubles as the retry for the audio unlock
+export class SoundIcon {
   private el: HTMLButtonElement;
 
-  constructor(text: string, onTap: () => void) {
+  constructor(label: string, onTap: () => void) {
     style();
     this.el = document.createElement('button');
     this.el.type = 'button';
     this.el.className = 'bwm-sound';
-    this.el.textContent = text;
+    this.el.innerHTML = SPEAKER_OFF;
+    this.el.setAttribute('aria-label', label);
+    this.el.title = label;
     this.el.addEventListener('click', onTap);
     document.body.appendChild(this.el);
   }
 
   set visible(on: boolean) {
     this.el.classList.toggle('on', on);
+  }
+
+  // css px from the top and right edges of the window
+  place(top: number, right: number): void {
+    this.el.style.top = `${Math.round(top)}px`;
+    this.el.style.right = `${Math.round(right)}px`;
   }
 }
 

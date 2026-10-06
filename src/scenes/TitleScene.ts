@@ -102,6 +102,10 @@ export class TitleScene extends Scene {
     return 20;
   }
 
+  get soundIconSlot(): number {
+    return 0;
+  }
+
   exit(): void {
     this.off?.();
     this.offGesture?.();

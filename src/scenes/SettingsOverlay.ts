@@ -38,6 +38,8 @@ export class SettingsOverlay extends Scene {
           },
         },
         { kind: 'toggle', label: T.reduceMotion, get: () => s.data.reduceMotion, set: (v) => s.set('reduceMotion', v) },
+        // raw beep, no Tone: tells a device/browser problem apart from a game one
+        { kind: 'button', label: T.testSound, action: () => game.audio.testBeep() },
         { kind: 'button', label: TEXT.howTo.button, action: () => game.scenes.push(new HowToPlayOverlay(game)) },
         { kind: 'button', label: TEXT.menu.back, action: () => this.close() },
       ],

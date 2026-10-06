@@ -61,6 +61,7 @@ export const TEXT = {
     sfx: 'Sound effects',
     fullscreen: 'Fullscreen',
     reduceMotion: 'Reduce motion & flashes',
+    testSound: 'Test sound',
     on: 'On',
     off: 'Off',
   },
@@ -113,7 +114,7 @@ export const TEXT = {
   platform: {
     rotate: 'Rotate your device to landscape',
     silentSwitch: 'No sound? Check your silent switch.',
-    enableSound: '🔊 Tap for sound',
+    enableSound: 'Sound is off, tap to turn it on',
   },
   wave: {
     key: isTouch ? 'HOLD' : 'SPACE',

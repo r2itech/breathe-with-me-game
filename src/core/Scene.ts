@@ -24,6 +24,10 @@ export abstract class Scene {
   get idleFps(): number {
     return 0;
   }
+  // logical px kept free at the top-right before the "sound off" icon, null = no icon here
+  get soundIconSlot(): number | null {
+    return null;
+  }
   abstract update(dt: number): void;
 
   destroy(): void {

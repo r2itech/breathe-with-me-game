@@ -4,7 +4,7 @@ import { PERF } from '../data/levels';
 import { TEXT } from '../data/text';
 import { PerfOverlay } from '../ui/PerfOverlay';
 import { Input } from './Input';
-import { RotatePrompt, showToast, SoundButton } from './overlays';
+import { RotatePrompt, showToast, SoundIcon } from './overlays';
 import { canFullscreen, isElectron, isIOS, isPortrait, isTouch, safeAreaInsets } from './platform';
 import { perfOn } from './perfProbe';
 import { SceneManager } from './SceneManager';
@@ -45,9 +45,8 @@ export class Game {
   private offX = 0;
   private offY = 0;
   private rotate: RotatePrompt | null = null;
-  private soundButton: SoundButton | null = null;
-  // the passive unlock had its couple of seconds, the button may show now
-  private soundArmed = false;
+  private soundIcon: SoundIcon;
+  private soundIconTimer = 0;
   private fpsCap = 0;
   private idle = 0;
   private fpsTime = 0;
@@ -61,17 +60,11 @@ export class Game {
     // audio first: its unlock listeners have to run before anything else
     // (fullscreen) touches the same gesture
     this.audio = new AudioEngine(this.settings.data);
-    this.audio.onStateChange = () => this.syncSoundButton();
+    this.soundIcon = new SoundIcon(TEXT.platform.enableSound, () => this.audio.retryUnlock());
+    this.audio.onStateChange = () => this.syncSoundIcon();
     this.input = new Input(app.canvas);
     this.input.onGesture(() => (this.idle = 0));
-    this.input.onFirstInput(() => {
-      this.maybeIOSHint();
-      // give the automatic unlock a couple of seconds before offering the button
-      window.setTimeout(() => {
-        this.soundArmed = true;
-        this.syncSoundButton();
-      }, 1200);
-    });
+    this.input.onFirstInput(() => this.maybeIOSHint());
     this.settings.onChange((s) => this.audio.applySettings(s));
 
     const sceneLayer = new Container();
@@ -81,12 +74,7 @@ export class Game {
     this.app.stage.addChild(this.stage, this.bars);
     this.scenes = new SceneManager(sceneLayer, overlayLayer, fadeLayer);
 
-    if (isTouch) {
-      this.rotate = new RotatePrompt(TEXT.platform.rotate);
-      // last-resort unlock: a tap on this real <button> is the one gesture every
-      // mobile engine accepts, for when the passive listeners in Input.ts don't
-      this.soundButton = new SoundButton(TEXT.platform.enableSound, () => this.audio.retryUnlock());
-    }
+    if (isTouch) this.rotate = new RotatePrompt(TEXT.platform.rotate);
     window.addEventListener('resize', () => this.layout());
     window.addEventListener('orientationchange', () => this.layout());
     document.addEventListener('fullscreenchange', () => {
@@ -119,6 +107,11 @@ export class Game {
       const dt = Math.min(ticker.deltaMS / 1000, 0.1);
       this.trackFps(ticker.deltaMS / 1000);
       this.updateFpsCap(dt);
+      this.soundIconTimer -= dt;
+      if (this.soundIconTimer <= 0) {
+        this.soundIconTimer = 0.25;
+        this.syncSoundIcon();
+      }
       this.input.update(dt);
       this.scenes.update(dt);
       this.stage.position.set(this.offX + this.shakeX * this.scale, this.offY + this.shakeY * this.scale);
@@ -221,10 +214,16 @@ export class Game {
     this.fpsFrames = 0;
   }
 
-  // explicit sound button once the passive unlock had a couple of seconds and
-  // clearly didn't work; re-checked after every unlock attempt
-  private syncSoundButton(): void {
-    if (this.soundButton) this.soundButton.visible = this.soundArmed && !this.audio.unlocked;
+  // "sound off" icon on the title and in levels while the context isn't
+  // running (asleep on purpose doesn't count)
+  private syncSoundIcon(): void {
+    const slot = this.scenes?.soundIconSlot ?? null;
+    const show = slot !== null && !this.audio.unlocked;
+    this.soundIcon.visible = show;
+    if (!show) return;
+    const right = this.offX + (this.safe.right + 16 + slot) * this.scale;
+    const top = this.offY + (this.safe.top + 16) * this.scale;
+    this.soundIcon.place(top, right);
   }
 
   private trackFps(dt: number): void {
