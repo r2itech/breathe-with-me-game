@@ -243,8 +243,8 @@ export class CityMapScene extends Scene {
   }
 
   enter(): void {
-    const done = LEVELS.slice(0, Math.min(this.game.save.data.completed, 4)).map((l) => l.music.signature);
-    this.game.audio.playMenuMusic(this.opts.celebrate || this.game.save.data.finished ? 'ending' : 'map', done);
+    // just the light map drone, the full band waits for the ending
+    this.game.audio.playMenuMusic('map');
     this.off = this.game.input.on((a) => this.onAction(a));
   }
 

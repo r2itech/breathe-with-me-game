@@ -33,6 +33,9 @@ export class LevelSong {
   private step = 0;
   private lastBpm = 0;
   private cutoff = 0;
+  // layers that are off don't get notes at all, a muted synth still burns CPU
+  private on = { pad: false, pulse: false, melody: false, extra: false };
+  private companionOn: boolean[] = [];
 
   constructor(
     private cfg: MusicConfig,
@@ -116,7 +119,7 @@ export class LevelSong {
         if (cfg.seventh) tones.push(d + 6);
         const freqs = tones.map((x) => mtof(this.note(x)));
         const barSec = Tone.Time('1m').toSeconds();
-        this.pad.synth.triggerAttackRelease(freqs, barSec * 0.95, time, 0.6);
+        if (this.on.pad) this.pad.synth.triggerAttackRelease(freqs, barSec * 0.95, time, 0.6);
         this.bar++;
       }, '1m').start(0),
     );
@@ -130,9 +133,9 @@ export class LevelSong {
         const eighth = Tone.Time('8n').toSeconds();
 
         const m = cfg.melody[s % cfg.melody.length];
-        if (m >= 0) this.lead.play(mtof(this.note(m + cd, cfg.melodyOctave)), eighth * 1.6, time, 0.55 + 0.2 * Math.random());
+        if (m >= 0 && this.on.melody) this.lead.play(mtof(this.note(m + cd, cfg.melodyOctave)), eighth * 1.6, time, 0.55 + 0.2 * Math.random());
 
-        switch (cfg.pulse) {
+        switch (this.on.pulse ? cfg.pulse : 'none') {
           case 'lofi':
             if (s % 8 === 0 || s % 8 === 5) this.kick.triggerAttackRelease(mtof(this.note(0, -2)), '8n', time, 0.8);
             if (s % 2 === 1) this.hat.triggerAttackRelease('32n', time + eighth * 0.08, 0.35 + 0.2 * Math.random());
@@ -156,14 +159,14 @@ export class LevelSong {
         }
 
         // extra sparkle, chord tones up high
-        if (s % 2 === 0) {
+        if (s % 2 === 0 && this.on.extra) {
           const tone = [0, 2, 4, 2][(s / 2) % 4];
           this.bell.play(mtof(this.note(cd + tone, 2)), eighth * 2, time, 0.3);
         }
 
         // companions each take a slice of the beat so they don't pile up
         this.companionInst.forEach((inst, i) => {
-          if ((s + i * 2) % 4 !== 0) return;
+          if (!this.companionOn[i] || (s + i * 2) % 4 !== 0) return;
           const tone = [0, 2, 4, 6][(Math.floor(s / 4) + i) % 4];
           inst.play(mtof(this.note(cd + tone, i % 2 === 0 ? 1 : 0)), eighth * 2.5, time + i * 0.01, 0.45);
         });
@@ -181,6 +184,12 @@ export class LevelSong {
   setLayers(l: LayerLevels, calm: number): void {
     const now = Tone.now();
     const mix = this.cfg.mix;
+    const live = (v: number) => v > 0.01;
+    this.on.pad = live(l.pad * mix.pad);
+    this.on.pulse = live(l.pulse * mix.pulse);
+    this.on.melody = live(l.melody * mix.melody);
+    this.on.extra = live(l.extra * mix.extra);
+    this.companionOn = this.companionGains.map((_, i) => live((l.companions[i] ?? 0) * mix.companion));
     this.layers.pad.gain.setTargetAtTime(l.pad * mix.pad, now, 0.4);
     this.layers.pulse.gain.setTargetAtTime(l.pulse * mix.pulse, now, 0.4);
     this.layers.melody.gain.setTargetAtTime(l.melody * mix.melody, now, 0.5);
@@ -201,10 +210,16 @@ export class LevelSong {
     const cd = this.chordDegree();
     const tones = [0, 2, 4, 7, 9, 11, 14];
     tones.forEach((t, i) => {
-      this.bell.play(mtof(this.note(cd + t, 1)), 2.5, now + i * 0.14, 0.5);
-      this.lead.play(mtof(this.note(cd + t, 0)), 2, now + i * 0.14 + 0.07, 0.35);
+      this.bell.play(mtof(this.note(cd + t, 1)), 0.3, now + i * 0.14, 0.5);
+      this.lead.play(mtof(this.note(cd + t, 0)), 0.3, now + i * 0.14 + 0.07, 0.35);
     });
     this.layers.extra.gain.setTargetAtTime(this.cfg.mix.extra * 1.5, now, 0.3);
+  }
+
+  get voices(): number {
+    let n = this.pad.synth.activeVoices + this.lead.voices + this.bell.voices;
+    for (const i of this.companionInst) n += i.voices;
+    return n;
   }
 
   fadeOut(time = 1.2): void {

@@ -44,11 +44,11 @@ export class Input {
     // on a phone held in portrait, which is where every phone starts. Listening
     // on window in the capture phase sees the tap whatever it lands on.
     //
-    // Which event types actually count as "a gesture" for audio unlock is not
-    // the same across engines (iOS Safari wants touchend, Chromium's autoplay
-    // policy document lists its own set) and isn't worth trusting to one guess,
-    // so every event every mobile audio library uses for this is listened for.
-    for (const type of ['touchstart', 'touchend', 'pointerdown', 'mousedown', 'click', 'keydown'] as const) {
+    // Only events that actually grant user activation: iOS Safari wants
+    // touchend, Chromium pointerup/mousedown/keydown, click covers the rest.
+    // The audio engine guards itself, so after the first unlock these are a
+    // no-op unless the OS knocked the context out.
+    for (const type of ['touchend', 'pointerup', 'mousedown', 'click', 'keydown'] as const) {
       window.addEventListener(type, () => this.fireGesture(), { capture: true, passive: true });
     }
 

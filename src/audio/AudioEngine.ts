@@ -1,14 +1,50 @@
 import * as Tone from 'tone';
+import { isIOS, isTouch } from '../core/platform';
 import type { SettingsData } from '../core/Settings';
 import { AUDIO, MENU_MUSIC, type InstrumentKind, type MusicConfig } from '../data/levels';
 import { BreathVoice } from './BreathVoice';
 import { LevelSong, type LayerLevels } from './LevelSong';
-import { mtof } from './instruments';
+import { MAX_VOICES, mtof } from './instruments';
 
 type MenuKind = keyof typeof MENU_MUSIC;
 
 function timeout(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+// phones: trade latency for battery. Tone makes its default context on import,
+// so swap it (and close the old one) before anything builds on it
+if (isTouch) Tone.setContext(new Tone.Context({ latencyHint: 'playback', lookAhead: 0.15 }), true);
+
+// things that put the whole context to sleep
+type Hold = 'hidden' | 'muted' | 'paused';
+
+// paused this long and the context gets suspended
+const PAUSE_SUSPEND_MS = 4000;
+
+// 0.5 s of 8-bit silence, for the old-iOS silent switch trick
+function silentWavUrl(): string {
+  const n = 4000;
+  const buf = new ArrayBuffer(44 + n);
+  const v = new DataView(buf);
+  const str = (o: number, t: string) => {
+    for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i));
+  };
+  str(0, 'RIFF');
+  v.setUint32(4, 36 + n, true);
+  str(8, 'WAVE');
+  str(12, 'fmt ');
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true);
+  v.setUint16(22, 1, true);
+  v.setUint32(24, 8000, true);
+  v.setUint32(28, 8000, true);
+  v.setUint16(32, 1, true);
+  v.setUint16(34, 8, true);
+  str(36, 'data');
+  v.setUint32(40, n, true);
+  new Uint8Array(buf, 44).fill(128);
+  return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
 }
 
 interface SongRequest {
@@ -21,10 +57,6 @@ interface SongRequest {
 export class AudioEngine {
   ready = false;
   private starting = false;
-  // last thing that went wrong building or unlocking, if anything did.
-  // nothing upstream of this surfaced it before, so a real failure here
-  // looked identical to "the browser just won't unlock"
-  private lastError = '';
   private master!: Tone.Gain;
   private musicBus!: Tone.Gain;
   private sfxBus!: Tone.Gain;
@@ -41,86 +73,72 @@ export class AudioEngine {
   private heartTimer = 0;
   private settings: SettingsData;
   private paused = false;
+  private holds = new Set<Hold>();
+  private pauseTimer = 0;
+  private silentEl: HTMLAudioElement | null = null;
 
   constructor(settings: SettingsData) {
     this.settings = settings;
+    this.hold('muted', AudioEngine.isMuted(settings));
   }
 
-  // catches anything that doesn't go through init()'s own try/catch — Tone.Reverb
-  // generates its impulse response fire-and-forget internally, for one, so a
-  // failure there would otherwise never reach `lastError` at all
-  recordUnhandledError(reason: unknown): void {
-    this.lastError = `unhandled: ${reason instanceof Error ? reason.message : String(reason)}`;
+  private static isMuted(s: SettingsData): boolean {
+    return s.master <= 0 || (s.music <= 0 && s.sfx <= 0);
+  }
+
+  get context(): AudioContext {
+    return Tone.getContext().rawContext as AudioContext;
   }
 
   get running(): boolean {
-    return (Tone.getContext().rawContext as AudioContext).state === 'running';
+    return this.context.state === 'running';
   }
 
-  // one line of ground truth for the "still no sound" reports: whatever is
-  // wrong, this says whether it's the context, the game's own volume, or
-  // neither — ctx=running alone doesn't rule out the mixer sitting at 0
-  diagnostics(): string {
-    const raw = Tone.getContext().rawContext as AudioContext;
-    const gains = this.ready
-      ? ` gain=${this.master.gain.value.toFixed(2)}/${this.musicBus.gain.value.toFixed(2)}/${this.sfxBus.gain.value.toFixed(2)}`
-      : ' gain=n/a(not built)';
-    const vol = `vol=${this.settings.master}/${this.settings.music}/${this.settings.sfx}`;
-    const err = this.lastError ? ` err=${this.lastError}` : '';
-    return `ctx=${raw.state} sr=${raw.sampleRate} ready=${this.ready}${gains} ${vol} session=${navigator.audioSession?.type ?? 'n/a'}${err}`;
-  }
-
-  // a raw oscillator straight to the context's destination, nothing from Tone's
-  // graph involved. if this is inaudible, the problem is the context or the
-  // device, not our code: Tone can't be reached before this is.
-  testBeep(): void {
-    try {
-      const ctx = Tone.getContext().rawContext as AudioContext;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.frequency.value = 880;
-      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.5, ctx.currentTime + 0.05);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.5);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.55);
-    } catch {
-      // surfaced through diagnostics() instead of thrown
-    }
+  // unlocked and either playing or asleep on purpose
+  get unlocked(): boolean {
+    return this.ready && (this.running || this.holds.size > 0);
   }
 
   // iOS mutes Web Audio with the ring/silent switch on unless the page asks for
-  // a playback session. Safari 16.4+ only, and harmless to miss elsewhere.
+  // a playback session. Safari 16.4+ has an API for it, older iOS needs a
+  // looping silent <audio> to move the page onto the media channel.
   private claimPlaybackSession(): void {
     try {
-      if (navigator.audioSession) navigator.audioSession.type = 'playback';
+      if (navigator.audioSession) {
+        navigator.audioSession.type = 'playback';
+        return;
+      }
     } catch {
-      // older Safari, the silent-switch hint covers it
+      // fall through to the <audio> trick
     }
+    if (!isIOS || this.silentEl) return;
+    const el = document.createElement('audio');
+    el.src = silentWavUrl();
+    el.loop = true;
+    el.setAttribute('playsinline', '');
+    el.setAttribute('x-webkit-airplay', 'deny');
+    this.silentEl = el;
+    void el.play().catch(() => {});
   }
 
-  // must run from inside a user gesture in browsers. mobile browsers can resolve
-  // resume() while leaving the context suspended, so this never latches on a
-  // failed attempt: every later gesture calls it again until audio really runs.
-  //
-  // some mobile browsers also leave the resume() promise pending forever instead
-  // of rejecting it when a gesture doesn't qualify, rather than settling it either
-  // way, so this races it against a timeout — without that, `starting` would stay
-  // true forever and silently swallow every later retry too.
+  // must run from inside a user gesture. mobile browsers can resolve resume()
+  // while leaving the context suspended, so this keeps trying on later gestures
+  // until it really runs; after that it only wakes a context the OS knocked out
+  // (calls, Siri), never one we put to sleep on purpose. the context itself is
+  // never recreated.
   async init(): Promise<void> {
-    if (this.starting || (this.ready && this.running)) return;
+    if (this.starting) return;
+    if (this.ready) {
+      if (!this.running && this.holds.size === 0) this.wake();
+      return;
+    }
     this.starting = true;
     this.claimPlaybackSession();
     try {
+      // some mobile browsers leave resume() pending forever on a gesture they don't count
       await Promise.race([this.unlock(), timeout(2500)]);
-      this.lastError = '';
-    } catch (err) {
-      // record it instead of swallowing it: a build() failure here used to
-      // look identical to "the browser just won't unlock", when it's really
-      // the context being perfectly fine and something in our own graph
-      // throwing partway through, leaving `ready` false for a different reason
-      this.lastError = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    } catch {
+      // next gesture tries again
     } finally {
       this.starting = false;
     }
@@ -128,19 +146,18 @@ export class AudioEngine {
 
   private async unlock(): Promise<void> {
     await Tone.start();
-    const raw = Tone.getContext().rawContext as AudioContext;
-    if (raw.state !== 'running') await raw.resume();
-    // if it's already ready the graph survived a suspend and only needed waking
+    if (!this.running) await this.context.resume();
     if (this.running && !this.ready) this.build();
   }
 
   private build(): void {
-    Tone.getContext().lookAhead = 0.05;
+    // desktop keeps it snappy, phones keep the bigger playback lookahead
+    if (!isTouch) Tone.getContext().lookAhead = 0.05;
 
     this.master = new Tone.Gain(1).toDestination();
     this.musicBus = new Tone.Gain(1).connect(this.master);
     this.sfxBus = new Tone.Gain(1).connect(this.master);
-    this.reverb = new Tone.Reverb({ decay: 5, preDelay: 0.02, wet: 0.3 }).connect(this.musicBus);
+    this.reverb = new Tone.Reverb({ decay: 2.5, preDelay: 0.02, wet: 0.3 }).connect(this.musicBus);
 
     this.playerBreath = new BreathVoice(this.sfxBus, 0, AUDIO.breathGain);
     this.npcBreath = new BreathVoice(this.sfxBus, AUDIO.npcPan, AUDIO.npcBreathGain);
@@ -158,6 +175,7 @@ export class AudioEngine {
       envelope: { attack: 0.002, decay: 0.18, sustain: 0, release: 0.12 },
       volume: -16,
     }).connect(this.sfxBus);
+    this.blip.maxPolyphony = MAX_VOICES;
     this.thud = new Tone.MembraneSynth({
       pitchDecay: 0.02,
       octaves: 3,
@@ -173,6 +191,7 @@ export class AudioEngine {
 
     this.ready = true;
     this.applySettings(this.settings);
+    this.applyHolds();
     if (this.pending) {
       const p = this.pending;
       this.pending = null;
@@ -182,6 +201,7 @@ export class AudioEngine {
 
   applySettings(s: SettingsData): void {
     this.settings = s;
+    this.hold('muted', AudioEngine.isMuted(s));
     if (!this.ready) return;
     this.master.gain.rampTo(s.master, 0.1);
     this.musicBus.gain.rampTo(s.music, 0.1);
@@ -212,6 +232,7 @@ export class AudioEngine {
   private requestSong(req: SongRequest): void {
     // a new song always means we're not paused anymore (restart from the pause menu)
     this.paused = false;
+    this.clearPauseHold();
     if (!this.ready) {
       this.pending = req;
       return;
@@ -248,11 +269,11 @@ export class AudioEngine {
     panic: number,
     loudness = panic,
   ): void {
-    if (!this.ready || this.paused) return;
+    if (!this.ready || this.paused || this.holds.size) return;
     if (player) this.playerBreath.update(dt, player.lung, player.inhaling);
-    else this.playerBreath.silence();
+    else this.playerBreath.silence(dt);
     if (npc) this.npcBreath.update(dt, npc.lung, npc.inhaling);
-    else this.npcBreath.silence();
+    else this.npcBreath.silence(dt);
 
     if (panic > 0.06) {
       this.heartTimer -= dt;
@@ -309,23 +330,36 @@ export class AudioEngine {
     this.blip.triggerAttackRelease(mtof(88), 0.12, now + 0.07, 0.3);
   }
 
-  // tab hidden: stop the whole audio context, not just the transport
-  suspend(): void {
+  // anything holding = context suspended, Tone's clock stopped and the
+  // keep-alive <audio> paused, so nothing ticks while nobody can hear it
+  hold(reason: Hold, on: boolean): void {
+    const was = this.holds.size > 0;
+    if (on) this.holds.add(reason);
+    else this.holds.delete(reason);
+    if (was !== this.holds.size > 0) this.applyHolds();
+  }
+
+  private applyHolds(): void {
     if (!this.ready) return;
+    const ctx = Tone.getContext() as Tone.Context;
     try {
-      void (Tone.getContext().rawContext as AudioContext).suspend();
+      if (this.holds.size) {
+        ctx.clockSource = 'offline';
+        void this.context.suspend().catch(() => {});
+        this.silentEl?.pause();
+      } else {
+        ctx.clockSource = 'worker';
+        this.wake();
+      }
     } catch {
-      // already suspended
+      // closed or mid-transition, the next change sorts it out
     }
   }
 
-  wake(): void {
-    if (!this.ready) return;
-    try {
-      void (Tone.getContext().rawContext as AudioContext).resume().catch(() => {});
-    } catch {
-      // mobile refuses this outside a gesture, so init() retries on the next tap
-    }
+  // mobile can refuse this outside a gesture, init() retries on the next tap
+  private wake(): void {
+    void this.context.resume().catch(() => {});
+    if (this.silentEl) void this.silentEl.play().catch(() => {});
   }
 
   pause(): void {
@@ -334,11 +368,26 @@ export class AudioEngine {
     this.playerBreath.silence();
     this.npcBreath.silence();
     Tone.getTransport().pause();
+    window.clearTimeout(this.pauseTimer);
+    this.pauseTimer = window.setTimeout(() => this.hold('paused', true), PAUSE_SUSPEND_MS);
   }
 
   resume(): void {
     if (!this.ready) return;
     this.paused = false;
+    this.clearPauseHold();
     Tone.getTransport().start();
+  }
+
+  private clearPauseHold(): void {
+    window.clearTimeout(this.pauseTimer);
+    this.hold('paused', false);
+  }
+
+  // live numbers for the ?perf=1 overlay
+  stats(): { state: string; voices: number } {
+    let voices = this.song?.voices ?? 0;
+    if (this.ready) voices += this.blip.activeVoices;
+    return { state: this.context.state, voices };
   }
 }

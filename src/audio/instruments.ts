@@ -4,13 +4,18 @@ import type { InstrumentKind } from '../data/levels';
 export interface Instrument {
   output: Tone.ToneAudioNode;
   play(freq: number | number[], dur: number, time: number, vel: number): void;
+  readonly voices: number;
   dispose(): void;
 }
+
+// per instrument, anything past this gets dropped instead of piling up
+export const MAX_VOICES = 6;
 
 export const mtof = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
 
 // any voice type, PolySynth<FMSynth> doesn't assign to PolySynth<Synth>
 function wrap(synth: Tone.PolySynth<any>, extra: Tone.ToneAudioNode[] = []): Instrument {
+  synth.maxPolyphony = MAX_VOICES;
   const last = extra.length ? extra[extra.length - 1] : synth;
   if (extra.length) {
     synth.connect(extra[0]);
@@ -20,6 +25,9 @@ function wrap(synth: Tone.PolySynth<any>, extra: Tone.ToneAudioNode[] = []): Ins
     output: last,
     play(freq, dur, time, vel) {
       synth.triggerAttackRelease(freq, dur, time, vel);
+    },
+    get voices() {
+      return synth.activeVoices;
     },
     dispose() {
       synth.dispose();
@@ -47,7 +55,7 @@ export function makeInstrument(kind: InstrumentKind): Instrument {
       const s = new Tone.PolySynth(Tone.FMSynth, {
         harmonicity: 5.07,
         modulationIndex: 2.2,
-        envelope: { attack: 0.001, decay: 1.4, sustain: 0, release: 1.4 },
+        envelope: { attack: 0.001, decay: 1.4, sustain: 0, release: 0.6 },
         modulationEnvelope: { attack: 0.001, decay: 0.4, sustain: 0, release: 0.4 },
         volume: -14,
       });
@@ -79,10 +87,12 @@ export function makeInstrument(kind: InstrumentKind): Instrument {
 
 export function makePad(cutoff: number): { synth: Tone.PolySynth; filter: Tone.Filter; dispose(): void } {
   const synth = new Tone.PolySynth(Tone.Synth, {
-    oscillator: { type: 'fattriangle', count: 3, spread: 18 },
-    envelope: { attack: 1.4, decay: 0.5, sustain: 0.8, release: 2.8 },
+    oscillator: { type: 'fattriangle', count: 2, spread: 18 },
+    envelope: { attack: 1.4, decay: 0.5, sustain: 0.8, release: 1.6 },
     volume: -20,
   });
+  // one chord ringing out under the next, 4 notes each
+  synth.maxPolyphony = 8;
   const filter = new Tone.Filter({ frequency: cutoff, type: 'lowpass', rolloff: -24, Q: 0.4 });
   synth.connect(filter);
   return {
