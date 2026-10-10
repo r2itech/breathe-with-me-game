@@ -180,6 +180,7 @@ export class Game {
   private armHistory(): void {
     if (this.historyArmed || !this.scenes.deep) return;
     try {
+      // no url arg, so the path and query stay the same
       history.pushState({ breatheWithMe: true }, '');
       this.historyArmed = true;
     } catch {

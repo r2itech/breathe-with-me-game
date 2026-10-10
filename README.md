@@ -150,6 +150,10 @@ All visuals are drawn procedurally in code, and all music and sound effects are 
 
 Font: [Quicksand](https://fonts.google.com/specimen/Quicksand) by Andrew Paglinawan, licensed under the SIL Open Font License 1.1.
 
+## Privacy
+
+The web version uses Vercel Web Analytics for anonymous, cookieless page-view counts. No personal data is collected. The desktop build has no analytics.
+
 ## If you're struggling
 
 Please talk to someone you trust. You can find a free, confidential helpline near you at [findahelpline.com](https://findahelpline.com).

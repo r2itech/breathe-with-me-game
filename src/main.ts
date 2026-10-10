@@ -7,6 +7,9 @@ import '@fontsource/quicksand/latin-600.css';
 import '@fontsource/quicksand/latin-700.css';
 import { Game } from './core/Game';
 import { goWarning } from './scenes/flow';
+import { initAnalytics } from './core/analytics';
+
+initAnalytics();
 
 async function boot(): Promise<void> {
   try {
